@@ -1,17 +1,21 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Session } from '@supabase/supabase-js';
+import { Session, User } from '@supabase/supabase-js';
 
 type AuthContextType = {
   session: Session | null;
+  user: User | null; // Added for easier access
   role: string | null;
   loading: boolean;
+  signOut: () => Promise<void>; // Added so any screen can log out
 };
 
 const AuthContext = createContext<AuthContextType>({
   session: null,
+  user: null,
   role: null,
   loading: true,
+  signOut: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -19,38 +23,39 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchRole = async (userId: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+    return data?.role ?? null;
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
 
       if (session?.user) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', session.user.id)
-          .single();
-
-        setRole(data?.role ?? null);
+        const userRole = await fetchRole(session.user.id);
+        setRole(userRole);
       }
-
       setLoading(false);
     };
 
     init();
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        setSession(session);
-
-        if (session?.user) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', session.user.id)
-            .single();
-
-          setRole(data?.role ?? null);
+      async (_event, currentSession) => {
+        setSession(currentSession);
+        if (currentSession?.user) {
+          const userRole = await fetchRole(currentSession.user.id);
+          setRole(userRole);
         } else {
           setRole(null);
         }
@@ -61,7 +66,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ session, role, loading }}>
+    <AuthContext.Provider value={{ 
+      session, 
+      user: session?.user ?? null, 
+      role, 
+      loading, 
+      signOut 
+    }}>
       {children}
     </AuthContext.Provider>
   );

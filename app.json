@@ -7,6 +7,12 @@
     "scheme": "icare",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/f780d3c7-6b6d-443e-961b-6fd028b09b4d"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.richkb27.icare",
@@ -18,6 +24,12 @@
     "android": {
       "package": "com.richkb27.icare",
       "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "INTERNET",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
         "CAMERA",
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
@@ -54,6 +66,9 @@
       "eas": {
         "projectId": "f780d3c7-6b6d-443e-961b-6fd028b09b4d"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }

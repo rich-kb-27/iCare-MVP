@@ -19,7 +19,7 @@ function RootNavigator() {
 
     if (session && role && inAuthGroup) {
       if (role === 'user') {
-        router.replace('/(patient-dashboard)');
+        router.replace('/(patient-drawer)');
       }
 
       if (role === 'freelancer') {

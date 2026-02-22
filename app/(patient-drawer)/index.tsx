@@ -11,15 +11,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
-// Import DrawerActions to manually trigger the drawer
 import { useNavigation, DrawerActions } from "@react-navigation/native";
-import { DrawerNavigationProp } from "@react-navigation/drawer";
 import { useRouter } from "expo-router";
-
-
-type PatientDrawerParamList = {
-  dashboard: undefined;
-};
 
 const { width } = Dimensions.get("window");
 
@@ -29,22 +22,20 @@ const PROMOS = [
   { id: "3", color: "#10B981", title: "Medical Insurance", subtitle: "Explore iCare plans" },
 ];
 
+// UPDATED: Added routes to match your new screens
 const FEATURES = [
-  { id: "1", name: "Appointments", icon: "calendar-check" },
-  { id: "2", name: "Subscriptions", icon: "card-bulleted" },
-  { id: "3", name: "Prescriptions", icon: "pill" },
-  { id: "4", name: "Lab Reports", icon: "test-tube" },
-  { id: "5", name: "Home Care", icon: "home-heart" },
+  { id: "1", name: "Appointments", icon: "calendar-check", route: "/(patient-dashboard)/appointments" },
+  { id: "2", name: "Subscriptions", icon: "card-bulleted", route: "/(patient-dashboard)/subscriptions" },
+  { id: "3", name: "Prescriptions", icon: "pill", route: "/(patient-dashboard)/prescription" },
+  { id: "4", name: "Lab Reports", icon: "test-tube", route: "/(patient-dashboard)/lab-reports" },
+  { id: "5", name: "Home Care", icon: "home-heart", route: "/(patient-dashboard)/home-care" },
 ];
 
 const UserDashboard = () => {
-  // Use generic navigation prop for the hook
   const navigation = useNavigation();
+  const router = useRouter();
   const [activePromo, setActivePromo] = useState(0);
   const flatListRef = useRef<FlatList>(null);
-  
-  const router = useRouter();
-
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -54,7 +45,6 @@ const UserDashboard = () => {
         return next;
       });
     }, 4000);
-
     return () => clearInterval(timer);
   }, []);
 
@@ -67,7 +57,6 @@ const UserDashboard = () => {
           <Text style={styles.logoText}>iCare</Text>
           <TouchableOpacity
             style={styles.hamburger}
-            // FIXED: Using DrawerActions ensures the drawer opens regardless of nesting
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
             <Ionicons name="menu-outline" size={30} color="#E0F2FE" />
@@ -76,11 +65,15 @@ const UserDashboard = () => {
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           
-          {/* --- SLIDING FEATURES LIST --- */}
+          {/* --- HORIZONTAL FEATURES (NAVIGATION ENABLED) --- */}
           <View style={styles.featuresContainer}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuresScroll}>
               {FEATURES.map((item) => (
-                <TouchableOpacity key={item.id} style={styles.featureItem}>
+                <TouchableOpacity 
+                  key={item.id} 
+                  style={styles.featureItem}
+                  onPress={() => router.push(item.route as any)} // NAVIGATE HERE
+                >
                   <View style={styles.featureIconBox}>
                     <MaterialCommunityIcons name={item.icon as any} size={24} color="#0EA5E9" />
                   </View>
@@ -92,7 +85,7 @@ const UserDashboard = () => {
 
           {/* --- CORE ACTION CARDS --- */}
           <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.facilityCard}>
+            <TouchableOpacity style={styles.facilityCard} onPress={() => router.push("/(patient-dashboard)/search-facilities")}>
               <View style={styles.iconCircle}>
                 <FontAwesome5 name="hospital-alt" size={20} color="#0EA5E9" />
               </View>
@@ -100,7 +93,7 @@ const UserDashboard = () => {
               <Text style={styles.cardSub}>Clinics & Hospitals</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.emergencyCard}>
+            <TouchableOpacity style={styles.emergencyCard} onPress={() => router.push("/(patient-dashboard)/emergency")}>
               <View style={[styles.iconCircle, { backgroundColor: "rgba(239, 68, 68, 0.2)" }]}>
                 <MaterialCommunityIcons name="ambulance" size={24} color="#EF4444" />
               </View>
@@ -109,7 +102,7 @@ const UserDashboard = () => {
             </TouchableOpacity>
           </View>
 
-          {/* --- AUTO-SLIDING PROMO BANNER --- */}
+          {/* --- PROMO BANNER --- */}
           <View style={styles.promoContainer}>
             <FlatList
               ref={flatListRef}
@@ -132,12 +125,12 @@ const UserDashboard = () => {
 
           {/* --- SECONDARY ACTIONS --- */}
           <View style={styles.secondaryActions}>
-            <TouchableOpacity style={styles.secondaryCard}>
+            <TouchableOpacity style={styles.secondaryCard} onPress={() => router.push("/search-doctors")}>
               <Ionicons name="search" size={22} color="#0EA5E9" />
               <Text style={styles.secondaryText}>Search Doctors</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.secondaryCard}>
+            <TouchableOpacity style={styles.secondaryCard} onPress={() => router.push("/(patient-dashboard)/tele-consultation")} >
               <Ionicons name="videocam" size={22} color="#0EA5E9" />
               <Text style={styles.secondaryText}>Tele-Consult</Text>
             </TouchableOpacity>
@@ -152,9 +145,9 @@ const UserDashboard = () => {
             <Text style={[styles.tabText, { color: "#0EA5E9" }]}>Home</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.tabItem}>
-            <Ionicons name="notifications" size={24} color="#94A3B8" />
-            <Text style={styles.tabText}>alerts </Text>
+          <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(patient-dashboard)/notifications")}>
+            <Ionicons name="notifications-outline" size={24} color="#94A3B8" />
+            <Text style={styles.tabText}>Alerts</Text>
           </TouchableOpacity>
 
           <View style={styles.middleTabContainer}>
@@ -163,12 +156,13 @@ const UserDashboard = () => {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.tabItem}>
+          <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(patient-dashboard)/chat")}>
             <Ionicons name="chatbubble-outline" size={24} color="#94A3B8" />
             <Text style={styles.tabText}>Chat</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.tabItem}>
+          {/* FIXED: Path for profile */}
+          <TouchableOpacity style={styles.tabItem} onPress={() => router.push("/(patient-drawer)/profile")}>
             <Ionicons name="person-outline" size={24} color="#94A3B8" />
             <Text style={styles.tabText}>Profile</Text>
           </TouchableOpacity>
@@ -177,6 +171,8 @@ const UserDashboard = () => {
     </SafeAreaView>
   );
 };
+
+// ... Styles remain the same (keeping it clean)
 
 const styles = StyleSheet.create({
   // Main Styles
