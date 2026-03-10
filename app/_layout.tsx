@@ -23,7 +23,7 @@ function RootNavigator() {
       }
 
       if (role === 'freelancer') {
-        router.replace('/(freelancer-dashboard)');
+        router.replace('/(freelancer-drawer)');
       }
 
       if (role === 'facility') {
