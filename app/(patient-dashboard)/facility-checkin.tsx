@@ -74,7 +74,7 @@ export default function CheckInScreen() {
           facility_id: facilityId, 
           facility_name: facilityName,
           call_type: 'facility',
-          status: 'pending',
+          status: 'ringing',
           channel_name: (facilityId as string).toLowerCase().trim(),
           reason: visitType === 'checkin' ? "Medical Check-in" : "General Inquiry"
         }

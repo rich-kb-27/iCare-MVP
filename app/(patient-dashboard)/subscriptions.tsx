@@ -19,6 +19,9 @@ export default function SubscriptionManager() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  
+  // New Filter State
+  const [filter, setFilter] = useState<'all' | 'active' | 'expired'>('active');
 
   const fetchMySubscriptions = async () => {
     try {
@@ -26,7 +29,6 @@ export default function SubscriptionManager() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // 1. Fetch subscriptions (including status check)
       const { data: subData, error: subError } = await supabase
         .from('subscriptions')
         .select(`
@@ -43,19 +45,16 @@ export default function SubscriptionManager() {
       if (subError) throw subError;
 
       if (subData && subData.length > 0) {
-        // 2. Fetch Doctor Names AND Profile Pictures
         const doctorIds = subData.map(s => s.doctor_id);
         const { data: profData } = await supabase
           .from('profiles')
-          .select('id, full_name, avatar_url') // Added avatar_url
+          .select('id, full_name, avatar_url')
           .in('id', doctorIds);
 
-        // 3. Merge data and check for expirations
         const merged = subData.map(sub => {
           const doctorInfo = profData?.find(p => p.id === sub.doctor_id);
           const daysLeft = calculateRemainingDays(sub.expiry_date);
           
-          // Logic: If time is up but DB still says 'active', sync it
           if (daysLeft === 0 && sub.status !== 'expired') {
             updateSubscriptionToExpired(sub.id);
           }
@@ -63,7 +62,7 @@ export default function SubscriptionManager() {
           return {
             ...sub,
             doctor: doctorInfo,
-            currentDaysLeft: daysLeft // Add for easier rendering
+            currentDaysLeft: daysLeft 
           };
         });
 
@@ -80,7 +79,6 @@ export default function SubscriptionManager() {
     }
   };
 
-  // Function to sync expired status to DB
   const updateSubscriptionToExpired = async (subId: string) => {
     await supabase
       .from('subscriptions')
@@ -120,6 +118,13 @@ export default function SubscriptionManager() {
     const ratio = 1 - (elapsed / totalDuration);
     return Math.max(0, Math.min(1, ratio)); 
   };
+
+  // Filter Logic
+  const filteredSubscriptions = subscriptions.filter(sub => {
+    if (filter === 'active') return sub.status === 'active';
+    if (filter === 'expired') return sub.status === 'expired';
+    return true; // 'all'
+  });
 
   const renderSubscriptionCard = ({ item }: any) => {
     const daysLeft = item.currentDaysLeft;
@@ -187,9 +192,17 @@ export default function SubscriptionManager() {
 
             <TouchableOpacity 
               style={styles.manageBtn}
-              onPress={() => router.push('/checkup/avaliable-doctors')}
+              onPress={() => router.push({
+                pathname: "/(patient-dashboard)/assign-freelancer",
+                params: { 
+                  doctorId: item.doctor_id, 
+                  doctorName: doctorName,
+                  specialty: item.plan_type, // Passing plan type as specialty context or you can pass the actual specialty if saved
+                  avatar: doctorPic
+                }
+              })}
             >
-              <Text style={styles.manageBtnText}>Renew Access</Text>
+              <Text style={styles.manageBtnText}>{isExpired ? "Renew Access" : "Extend Plan"}</Text>
             </TouchableOpacity>
           </View>
         </LinearGradient>
@@ -213,6 +226,21 @@ export default function SubscriptionManager() {
           </TouchableOpacity>
         </View>
 
+        {/* --- FILTER TABS --- */}
+        <View style={styles.filterTabs}>
+          {['active', 'expired', 'all'].map((tab) => (
+            <TouchableOpacity 
+              key={tab} 
+              onPress={() => setFilter(tab as any)}
+              style={[styles.tab, filter === tab && styles.activeTab]}
+            >
+              <Text style={[styles.tabText, filter === tab && styles.activeTabText]}>
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {loading && !refreshing ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color="#0EA5E9" />
@@ -220,7 +248,7 @@ export default function SubscriptionManager() {
           </View>
         ) : (
           <FlatList
-            data={subscriptions}
+            data={filteredSubscriptions}
             keyExtractor={(item) => item.id.toString()}
             renderItem={renderSubscriptionCard}
             contentContainerStyle={styles.listContent}
@@ -230,7 +258,7 @@ export default function SubscriptionManager() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="card-search-outline" size={60} color="#334155" />
-                <Text style={styles.emptyText}>No active subscriptions found.</Text>
+                <Text style={styles.emptyText}>No {filter !== 'all' ? filter : ''} subscriptions found.</Text>
                 <TouchableOpacity style={styles.findBtn} onPress={() => router.push('/checkup/avaliable-doctors')}>
                   <Text style={styles.findBtnText}>Find a Doctor</Text>
                 </TouchableOpacity>
@@ -248,6 +276,23 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 15 },
   headerTitle: { color: '#FFF', fontSize: 18, fontWeight: '900' },
   backCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center' },
+  
+  // Filter Styles
+  filterTabs: { 
+    flexDirection: 'row', 
+    backgroundColor: 'rgba(255,255,255,0.05)', 
+    marginHorizontal: 20, 
+    borderRadius: 14, 
+    padding: 5, 
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)'
+  },
+  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
+  activeTab: { backgroundColor: '#0EA5E9' },
+  tabText: { color: '#94A3B8', fontWeight: '700', fontSize: 13 },
+  activeTabText: { color: '#FFF' },
+
   listContent: { padding: 20 },
   cardContainer: { marginBottom: 18 },
   card: { borderRadius: 28, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },

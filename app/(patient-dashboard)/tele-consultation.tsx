@@ -18,6 +18,16 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
 
+// --- PURE JS UUID FALLBACK ---
+// This avoids the "Cannot find native module 'ExpoCrypto'" error in Expo Go
+const generateUUID = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 type Status = "loading" | "available" | "unavailable";
 
 export default function TeleConsultation() {
@@ -44,16 +54,14 @@ export default function TeleConsultation() {
     setStatus("loading");
     
     try {
-      // 1. Fetch only ACTIVE subscriptions
       const { data: subData, error: subError } = await supabase
         .from("subscriptions")
         .select("doctor_id, plan_type, id, expiry_date, status")
         .eq("patient_id", user.id)
-        .eq("status", "active"); // CRITICAL: Only show active ones
+        .eq("status", "active");
 
       if (subError) throw subError;
 
-      // Filter out any that are past their expiry date but still marked active
       const now = new Date();
       const validSubs = subData?.filter(sub => new Date(sub.expiry_date) > now) || [];
 
@@ -65,7 +73,6 @@ export default function TeleConsultation() {
 
       const doctorIds = validSubs.map(sub => sub.doctor_id);
 
-      // 2. Fetch the profiles of those specific freelancers
       let profileRequest = supabase
         .from("profiles") 
         .select("*")
@@ -78,7 +85,6 @@ export default function TeleConsultation() {
       const { data: profileData, error: profileError } = await profileRequest;
       if (profileError) throw profileError;
 
-      // 3. Merge data
       const merged = profileData.map(profile => {
         const sub = validSubs.find(s => s.doctor_id === profile.id);
         return { ...profile, subId: sub?.id, plan: sub?.plan_type };
@@ -94,13 +100,15 @@ export default function TeleConsultation() {
 
   useEffect(() => { fetchSubscribedDoctors(""); }, [user]);
 
+  // --- REFINED CALL INITIATION WITH JS UUID ---
   const handleStartCall = async (doctor: any) => {
-    if (!user?.id) {
-      Alert.alert("Authentication Error", "Please sign in to start a consultation.");
-      return;
-    }
+    if (!user?.id) return;
 
     try {
+      // 1. GENERATE THE PRIVATE UUID (JS Fallback)
+      const privateRoomId = generateUUID(); 
+
+      // 2. FETCH SENDER NAME
       const { data: profile } = await supabase
         .from('profiles')
         .select('full_name')
@@ -108,8 +116,8 @@ export default function TeleConsultation() {
         .single();
 
       const displayName = profile?.full_name || "Patient";
-      const agoraChannel = doctor.id.toLowerCase();
 
+      // 3. INSERT THE RECORD
       const { data, error } = await supabase
         .from('calls')
         .insert([
@@ -118,7 +126,8 @@ export default function TeleConsultation() {
             doctor_id: doctor.id, 
             patient_name: displayName, 
             status: 'ringing',
-            channel_name: agoraChannel 
+            channel_name: privateRoomId, 
+            initiated_by: user.id,
           }
         ])
         .select()
@@ -126,18 +135,20 @@ export default function TeleConsultation() {
 
       if (error) throw error;
 
+      // 4. NAVIGATE
       router.push({
         pathname: "/checkup/telemedicine", 
         params: { 
           doctorId: doctor.id, 
           doctorName: doctor.full_name,
           callId: data.id,
-          channelName: agoraChannel 
+          channelName: privateRoomId 
         }
       });
 
     } catch (error: any) {
-      Alert.alert("Call Failed", "Could not connect to the specialist.");
+      console.error("Call Failed:", error.message);
+      Alert.alert("Error", "Could not initiate the call.");
     }
   };
 
@@ -150,7 +161,7 @@ export default function TeleConsultation() {
             style={styles.avatar} 
           />
           <View style={styles.onlineBadge}>
-            <View style={styles.greenDot} />
+            <View  style={styles.greenDot} />
             <Text style={styles.onlineText}>{item.plan || 'Active'}</Text>
           </View>
         </View>

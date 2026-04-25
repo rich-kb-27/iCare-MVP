@@ -7,73 +7,38 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { supabase } from "@/lib/supabase";
 
 export default function PatientIncomingCall() {
+  // We get these from the Root Navigator's router.push params
   const { doctorName, doctorId, callId, specialty, doctorAvatar } = useLocalSearchParams();
   const router = useRouter();
   
-  // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Entrance Animation
+    Animated.timing(fadeAnim, { 
+      toValue: 1, 
+      duration: 800, 
+      useNativeDriver: true 
+    }).start();
 
-    // 🔥 FIX: Prevent reacting to your own call
-    const checkIfSelfCall = async () => {
-      if (!callId) return;
-
-      const { data: { user } } = await supabase.auth.getUser();
-
-      const { data } = await supabase
-        .from('calls')
-        .select('initiated_by')
-        .eq('id', callId)
-        .single();
-
-      if (data?.initiated_by === user?.id) {
-        router.back();
-        return;
-      }
-    };
-
-    checkIfSelfCall();
-
-    // 1. Entrance Fade
-    Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start();
-
-    // 2. Infinite Pulse for the Accept Button
+    // Infinite Pulse for the Accept Button
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1.15, duration: 1000, useNativeDriver: true }),
         Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
       ])
     ).start();
-
-    // 3. LISTEN FOR CANCELLATION
-    const channel = supabase
-      .channel(`call_status_${callId}`)
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'calls', 
-        filter: `id=eq.${callId}` 
-      }, (payload) => {
-        if (payload.new.status === 'ended' || payload.new.status === 'cancelled') {
-          router.back();
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [callId]);
+  }, []);
 
   const handleAccept = async () => {
     try {
       if (!callId) throw new Error("Missing callId");
 
+      // Set call to active so both sides can enter the room
       const { error } = await supabase
         .from('calls')
-        .update({ status: 'in-progress' })
+        .update({ status: 'active' })
         .eq('id', callId);
 
       if (error) throw error;
@@ -90,7 +55,8 @@ export default function PatientIncomingCall() {
 
   const handleDecline = async () => {
     try {
-      await supabase.from('calls').update({ status: 'ended' }).eq('id', callId);
+      // Notify the sender that the call was rejected
+      await supabase.from('calls').update({ status: 'declined' }).eq('id', callId);
       router.back();
     } catch (e) {
       router.back();
@@ -132,6 +98,7 @@ export default function PatientIncomingCall() {
         </View>
 
         <View style={styles.actionRow}>
+          {/* DECLINE BUTTON */}
           <TouchableOpacity style={styles.btnWrapper} onPress={handleDecline}>
             <View style={styles.iconCircleDecline}>
               <MaterialCommunityIcons name="phone-hangup" size={32} color="#FFF" />
@@ -139,6 +106,7 @@ export default function PatientIncomingCall() {
             <Text style={styles.declineLabel}>Decline</Text>
           </TouchableOpacity>
 
+          {/* ACCEPT BUTTON */}
           <TouchableOpacity style={styles.btnWrapper} onPress={handleAccept}>
             <Animated.View style={[styles.iconCircleAccept, { transform: [{ scale: pulseAnim }] }]}>
               <MaterialCommunityIcons name="phone-check" size={32} color="#FFF" />

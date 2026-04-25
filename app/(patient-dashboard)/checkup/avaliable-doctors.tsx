@@ -33,12 +33,10 @@ export default function CheckupScreen() {
   const [tickerIndex, setTickerIndex] = useState(0);
   const router = useRouter();
 
-  // Animations
   const ring1 = useRef(new Animated.Value(0)).current;
   const ring2 = useRef(new Animated.Value(0)).current;
   const contentFade = useRef(new Animated.Value(0)).current;
 
-  // 1. Radar Animation Logic
   const startRadar = () => {
     ring1.setValue(0);
     ring2.setValue(0);
@@ -61,7 +59,6 @@ export default function CheckupScreen() {
     ).start();
   };
 
-  // 2. Status Ticker & Animation Effect
   useEffect(() => {
     if (status === "loading") {
       startRadar();
@@ -72,49 +69,76 @@ export default function CheckupScreen() {
     }
   }, [status]);
 
-  // 3. FETCH DOCTOR LOGIC (RANDOMIZED & PREMIUM)
+  // 1. IMPROVED FETCH: Cascading Search + Load Balance (NO UPDATE YET)
   const fetchDoctor = async () => {
-    setStatus("loading");
-    contentFade.setValue(0);
+  setStatus("loading");
+  contentFade.setValue(0);
 
-    try {
-      // Fetch a pool of 10 available freelancers to pick from (Load Balancing)
-      const { data: doctors, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, specialization, avatar_url")
-        .eq("role", "freelancer")
-        .limit(10);
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const allowedSpecs = ['Clinical Officer', 'Nurse', 'Doctor'];
 
-      if (error || !doctors || doctors.length === 0) {
-        setTimeout(() => setStatus("unavailable"), 3000);
-        return;
-      }
+    // 1. Fetch a broad pool of ALL online, qualified freelancers
+    // We don't cascade the query anymore; we grab the top 20 across all ratings
+    const { data: pool, error } = await supabase
+      .from("profiles")
+      .select(`
+        id, 
+        full_name, 
+        specialization, 
+        avatar_url, 
+        rating,
+        assignments!left (current_load)
+      `)
+      .eq("role", "freelancer")
+      .eq("is_online", true)
+      .in("specialization", allowedSpecs)
+      .eq("assignments.assignment_date", today)
+      .order('rating', { ascending: false }) // Keep highest ratings at top
+      .limit(20);
 
-      // SELECT AT RANDOM: Everyone gets a turn
-      const randomIndex = Math.floor(Math.random() * doctors.length);
-      const selectedDoctor = doctors[randomIndex];
-      
-      setDoctor(selectedDoctor);
-
-      // "Artificial Intelligence" delay for premium feel
-      setTimeout(() => {
-        setStatus("available");
-        Animated.timing(contentFade, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }).start();
-      }, 3500);
-
-    } catch (err) {
-      console.error("Fetch Error:", err);
-      setStatus("unavailable");
+    if (!pool || pool.length === 0) {
+      setTimeout(() => setStatus("unavailable"), 3000);
+      return;
     }
-  };
+
+    // 2. Map the data so "no assignment" counts as 0 load
+    const processedPool = pool.map(doc => ({
+      ...doc,
+      load: doc.assignments?.[0]?.current_load || 0
+    }));
+
+    // 3. Find the lowest load currently in the pool
+    const minLoad = Math.min(...processedPool.map(d => d.load));
+
+    // 4. Create a sub-pool of doctors who have that minimum load
+    const candidatesAtMinLoad = processedPool.filter(d => d.load === minLoad);
+
+    // 5. From the "least busy" candidates, pick the one with the highest rating
+    // Since we ordered the original query by rating, the first one in this 
+    // filtered list will naturally be the highest rated among the least busy.
+    const selectedDoctor = candidatesAtMinLoad[0];
+
+    setDoctor(selectedDoctor);
+
+    setTimeout(() => {
+      setStatus("available");
+      Animated.timing(contentFade, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }).start();
+    }, 3000);
+
+  } catch (err) {
+    console.error("Selection Error:", err);
+    setStatus("unavailable");
+  }
+};
 
   useEffect(() => { fetchDoctor(); }, []);
 
-  // 4. START CALL HANDSHAKE
+  // 2. UPDATED START CALL: Increments workload ONLY when call is initiated
   const startCall = async () => {
     if (!doctor) return;
 
@@ -124,7 +148,11 @@ export default function CheckupScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // Get patient name for the doctor's alert
+      // INCREMENT WORKLOAD HERE (handshake)
+      await supabase.rpc('increment_doctor_workload', { 
+        target_doctor_id: doctor.id 
+      });
+
       const { data: patientProfile } = await supabase
         .from('profiles')
         .select('full_name')
@@ -138,8 +166,10 @@ export default function CheckupScreen() {
             patient_id: user.id,
             doctor_id: doctor.id,
             patient_name: patientProfile?.full_name || "Patient",
-            channel_name: doctor.id, 
+            doctor_name: doctor.full_name, 
+            channel_name: doctor.id,
             status: "ringing",
+            initiated_by: user.id, 
           },
         ])
         .select()
@@ -153,7 +183,8 @@ export default function CheckupScreen() {
           params: { 
             doctorId: doctor.id, 
             doctorName: doctor.full_name,
-            callId: callData.id 
+            callId: callData.id,
+            role: 'caller' 
           }
         });
       }, 2000);
@@ -194,19 +225,25 @@ export default function CheckupScreen() {
             <View style={styles.avatarContainer}>
               <View style={styles.avatarGlow} />
               {doctor?.avatar_url ? (
-                <Image 
-                  source={{ uri: doctor.avatar_url }} 
-                  style={styles.avatarImage} 
-                />
+                <Image source={{ uri: doctor.avatar_url }} style={styles.avatarImage} />
               ) : (
                 <Ionicons name="person" size={40} color="#FFF" />
               )}
             </View>
             <View style={styles.doctorInfo}>
               <Text style={styles.doctorName}>Dr. {doctor?.full_name}</Text>
-              <View style={styles.statusBadge}>
-                <View style={styles.pulseDot} />
-                <Text style={styles.statusText}>Verified Specialist</Text>
+              
+              {/* NEW RATING UI */}
+              <View style={styles.ratingRow}>
+                <Ionicons name="star" size={16} color="#F59E0B" />
+                <Text style={styles.ratingText}>
+                  {doctor?.rating ? Number(doctor.rating).toFixed(1) : "0.0"}
+                </Text>
+                <View style={styles.bulletSeparator} />
+                <View style={styles.statusBadge}>
+                  <View style={styles.pulseDot} />
+                  <Text style={styles.statusText}>Verified Expert</Text>
+                </View>
               </View>
             </View>
           </View>
@@ -288,7 +325,10 @@ const styles = StyleSheet.create({
   avatarGlow: { ...StyleSheet.absoluteFillObject, borderRadius: 37, borderWidth: 2, borderColor: "#0EA5E9", opacity: 0.5 },
   doctorInfo: { flex: 1 },
   doctorName: { color: "#FFF", fontSize: 22, fontWeight: "800" },
-  statusBadge: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 4 },
+  ratingText: { color: "#F59E0B", fontWeight: "800", fontSize: 15 },
+  bulletSeparator: { width: 4, height: 4, borderRadius: 2, backgroundColor: "#94A3B8", marginHorizontal: 4 },
+  statusBadge: { flexDirection: "row", alignItems: "center" },
   pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#22C55E", marginRight: 6 },
   statusText: { color: "#22C55E", fontWeight: "700", fontSize: 12 },
   statsRow: { flexDirection: "row", justifyContent: "space-around", paddingTop: 20, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.1)" },

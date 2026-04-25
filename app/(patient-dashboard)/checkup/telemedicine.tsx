@@ -25,7 +25,7 @@ const SUBSCRIPTION_PLANS = [
 ];
 
 export default function VideoCallScreen() {
-  const { doctorId, doctorName, callId } = useLocalSearchParams(); 
+  const { doctorId, doctorName, callId, channelName: paramChannel } = useLocalSearchParams();
   const router = useRouter();
   
   const engine = useRef<IRtcEngine>(createAgoraRtcEngine());
@@ -38,9 +38,23 @@ export default function VideoCallScreen() {
   const [activePlanName, setActivePlanName] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // FIXED UID PROTOCOL: Patient is always 2
   const localUid = 2;
-  const channelName = (callId as string);
+  const channelName = (paramChannel as string);
+
+  // 1. EXIT FLOW: The Handshake to Ratings Screen
+  const exitCall = () => {
+    engine.current.leaveChannel();
+    engine.current.release();
+    
+    // Redirect to the ratings screen with doctor context
+    router.replace({
+      pathname: '/checkup/rate-doctor',
+      params: { 
+        doctorId: doctorId,
+        doctorName: doctorName 
+      }
+    });
+  };
 
   useEffect(() => {
     if (!callId) return;
@@ -73,45 +87,48 @@ export default function VideoCallScreen() {
     };
   }, [channelName]);
 
-  // Inside your init function
-const init = async () => {
-  try {
-    if (Platform.OS === 'android') {
-      await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        PermissionsAndroid.PERMISSIONS.CAMERA,
-      ]);
+  const init = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+        ]);
+      }
+      
+      engine.current.initialize({ appId: APP_ID });
+      
+      engine.current.registerEventHandler({
+        onJoinChannelSuccess: () => {
+          setJoined(true);
+          if (callId) {
+            supabase.from('calls')
+              .update({ status: 'active' })
+              .eq('id', callId)
+              .then(() => console.log("Session marked active"));
+          }
+        },
+        onUserJoined: (_connection, uid) => {
+          setRemoteUid(uid);
+        },
+        onUserOffline: () => {
+          // If doctor hangs up, patient goes to rating
+          setRemoteUid(0);
+          exitCall();
+        },
+      });
+
+      engine.current.enableVideo();
+      engine.current.startPreview();
+
+      engine.current.joinChannel('', channelName, localUid, {
+        clientRoleType: ClientRoleType.ClientRoleBroadcaster,
+        channelProfile: ChannelProfileType.ChannelProfileCommunication,
+      });
+    } catch (e) { 
+        console.error("Agora Init Error:", e); 
     }
-    
-    engine.current.initialize({ appId: APP_ID });
-    
-    engine.current.registerEventHandler({
-      onJoinChannelSuccess: () => {
-        setJoined(true);
-        // Only update if we actually have a callId
-        if (callId) {
-          supabase.from('calls')
-            .update({ status: 'active' })
-            .eq('id', callId);
-        }
-      },
-      onUserJoined: (_connection, uid) => {
-        setRemoteUid(uid);
-      },
-      onUserOffline: () => setRemoteUid(0),
-    });
-
-    engine.current.enableVideo();
-    engine.current.startPreview();
-
-    engine.current.joinChannel('', channelName, localUid, {
-      clientRoleType: ClientRoleType.ClientRoleBroadcaster,
-      channelProfile: ChannelProfileType.ChannelProfileCommunication,
-    });
-  } catch (e) { 
-      console.error("Agora Init Error:", e); 
-  }
-};
+  };
 
   const handleSubscribe = async (plan: typeof SUBSCRIPTION_PLANS[0]) => {
     setLoading(true);
@@ -155,12 +172,8 @@ const init = async () => {
     }
   };
 
-  const exitCall = () => {
-    engine.current.leaveChannel();
-    router.replace('/(patient-drawer)'); 
-  };
-
   const onEndCall = async () => {
+    // Mark as ended in DB first
     await supabase.from('calls').update({ status: 'ended' }).eq('id', callId);
     exitCall();
   };
@@ -237,7 +250,7 @@ const init = async () => {
         </View>
       </SafeAreaView>
 
-      {/* MODALS REMAIN THE SAME... */}
+      {/* SUCCESS MODAL */}
       <Modal transparent visible={showSuccess} animationType="fade">
         <View style={styles.successOverlay}>
           <BlurView intensity={100} tint="dark" style={styles.successCard}>
@@ -252,6 +265,7 @@ const init = async () => {
         </View>
       </Modal>
 
+      {/* SUBSCRIPTION MODAL */}
       <Modal transparent visible={showSubModal} animationType="slide">
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowSubModal(false)} />
@@ -267,7 +281,7 @@ const init = async () => {
               </TouchableOpacity>
             </View>
             
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
               {SUBSCRIPTION_PLANS.map((plan) => (
                 <TouchableOpacity 
                   key={plan.id} 
@@ -328,13 +342,13 @@ const styles = StyleSheet.create({
   endCallBtn: { width: 75, height: 75, borderRadius: 38, backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center' },
   dangerBtn: { backgroundColor: '#F43F5E' },
   warningBtn: { backgroundColor: '#F59E0B' },
-  successOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  successCard: { width: '80%', padding: 30, borderRadius: 30, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.3)', overflow: 'hidden' },
+  successOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: 20 },
+  successCard: { width: '85%', padding: 30, borderRadius: 30, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.3)', overflow: 'hidden' },
   checkCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(16, 185, 129, 0.1)', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   successTitle: { color: '#FFF', fontSize: 24, fontWeight: '900', marginBottom: 10 },
   successSub: { color: '#94A3B8', textAlign: 'center', fontSize: 16, lineHeight: 22 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  subContent: { borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '85%', paddingBottom: 40, overflow: 'hidden' },
+  subContent: { borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '85%', overflow: 'hidden' },
   dragHandle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
   modalTitle: { color: '#FFF', fontSize: 22, fontWeight: '800' },

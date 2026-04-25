@@ -26,6 +26,7 @@ interface TimeSlot {
   end_time: string;
   doctor_notes: string;
   day_of_week: string;
+  status: 'Booked' | 'Completed' | 'Cancelled';
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -50,6 +51,24 @@ const ScheduleScreen = () => {
 
   useEffect(() => { fetchInitialData(); }, [user]);
   useEffect(() => { fetchSchedules(); }, [selectedDay]);
+
+  const updateSlotStatus = async (id: string, newStatus: string) => {
+  try {
+    const { error } = await supabase
+      .from('schedules')
+      .update({ status: newStatus })
+      .eq('id', id);
+
+    if (error) throw error;
+    
+    // Optimistic update to UI
+    setSlots(prev => prev.map(slot => 
+      slot.id === id ? { ...slot, status: newStatus as any } : slot
+    ));
+  } catch (e: any) {
+    Alert.alert("Status Update Failed", e.message);
+  }
+};
 
   const fetchInitialData = async () => {
     if (!user?.id) return;
@@ -194,18 +213,62 @@ const ScheduleScreen = () => {
 </TouchableOpacity>
         </View>
 
-        {loading ? <ActivityIndicator color="#0EA5E9" /> : slots.map((slot) => (
-          <View key={slot.id} style={styles.medicalCard}>
-            <View style={styles.timeColumn}>
-              <Text style={styles.timeText}>{new Date(slot.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
-              <View style={styles.verticalLine} />
+        {loading ? <ActivityIndicator color="#0EA5E9" /> :slots.map((slot) => (
+  <View key={slot.id} style={styles.medicalCard}>
+    <View style={styles.timeColumn}>
+      <Text style={styles.timeText}>
+        {new Date(slot.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+      </Text>
+      <View style={styles.verticalLine} />
+    </View>
+    
+    <View style={[
+      styles.cardMain, 
+      slot.status === 'Completed' && { borderLeftColor: '#10B981', opacity: 0.7 },
+      slot.status === 'Cancelled' && { borderLeftColor: '#EF4444' }
+    ]}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <TouchableOpacity 
+          style={{ flex: 1 }}
+          onPress={() => { 
+            setEditingId(slot.id); 
+            setAppointmentTime(new Date(slot.start_time)); 
+            setReason(slot.doctor_notes); 
+            setModalVisible(true); 
+          }}
+        >
+          <Text style={styles.patientName}>{slot.patient_name}</Text>
+          <Text style={styles.notesText} numberOfLines={1}>{slot.doctor_notes || "No clinical notes"}</Text>
+        </TouchableOpacity>
+        
+        {/* Status Quick Actions */}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          {slot.status === 'Booked' && (
+            <>
+              <TouchableOpacity onPress={() => updateSlotStatus(slot.id, 'Completed')}>
+                <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => updateSlotStatus(slot.id, 'Cancelled')}>
+                <Ionicons name="close-circle" size={24} color="#EF4444" />
+              </TouchableOpacity>
+            </>
+          )}
+          {slot.status !== 'Booked' && (
+            <View style={[
+              styles.statusTag, 
+              { backgroundColor: slot.status === 'Completed' ? '#D1FAE5' : '#FEE2E2' }
+            ]}>
+              <Text style={[
+                styles.statusTagText, 
+                { color: slot.status === 'Completed' ? '#065F46' : '#991B1B' }
+              ]}>{slot.status}</Text>
             </View>
-            <TouchableOpacity style={styles.cardMain} onPress={() => { setEditingId(slot.id); setAppointmentTime(new Date(slot.start_time)); setReason(slot.doctor_notes); setModalVisible(true); }}>
-              <Text style={styles.patientName}>{slot.patient_name}</Text>
-              <Text style={styles.notesText}>{slot.doctor_notes || "No clinical notes"}</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
+          )}
+        </View>
+      </View>
+    </View>
+  </View>
+))}
       </ScrollView>
 
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
@@ -301,6 +364,17 @@ const styles = StyleSheet.create({
   medicalInput: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 15, height: 80, marginTop: 20, borderWidth: 1, borderColor: '#E2E8F0' },
   submitBtn: { backgroundColor: '#0EA5E9', padding: 18, borderRadius: 15, alignItems: 'center', marginTop: 25 },
   submitBtnText: { color: '#FFF', fontWeight: '900' },
+  statusTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  statusTagText: {
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
 });
 
 export default ScheduleScreen;

@@ -1,132 +1,174 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, FlatList } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { 
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, 
+  Image, ActivityIndicator, Alert, RefreshControl, FlatList 
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-const FAMILY_DOCTORS = [
-  {
-    id: '1',
-    name: 'Dr. Chipo Moyo',
-    specialty: 'Family Physician',
-    experience: '12 years',
-    rating: '4.9',
-    reviews: '124',
-    image: 'https://i.pravatar.cc/150?u=chipo',
-    available: true,
-  },
-  {
-    id: '2',
-    name: 'Dr. Kelvin Zimba',
-    specialty: 'Pediatrician (Kids Specialist)',
-    experience: '8 years',
-    rating: '4.8',
-    reviews: '98',
-    image: 'https://i.pravatar.cc/150?u=kelvin',
-    available: true,
-  },
-  {
-    id: '3',
-    name: 'Dr. Mwansa K.',
-    specialty: 'Geriatrician (Senior Care)',
-    experience: '15 years',
-    rating: '5.0',
-    reviews: '210',
-    image: 'https://i.pravatar.cc/150?u=mwansa',
-    available: false,
-  },
+// Supabase
+import { supabase } from '@/lib/supabase';
+
+// High-level categories for specialized home care
+const CARE_CATEGORIES = [
+  { id: '1', title: 'Maternal Care', icon: 'baby-carriage', color: '#EC4899', description: 'Prenatal & Postnatal' },
+  { id: '2', title: 'Pediatricians', icon: 'baby', color: '#0EA5E9', description: 'Child Specialists' },
+  { id: '3', title: 'Senior Care', icon: 'walking', color: '#8B5CF6', description: 'Elderly Support' },
+  { id: '4', title: 'Physiotherapy', icon: 'heartbeat', color: '#10B981', description: 'Home Recovery' },
 ];
+
+interface Freelancer {
+  id: string;
+  full_name: string;
+  specialization: string;
+  experience: string;
+  rating: number;
+  reviews_count: number;
+  avatar_url: string;
+  is_online: boolean;
+  subscription_price?: string; // Add this to your Supabase schema later
+}
 
 const HomeCareScreen = () => {
   const router = useRouter();
+  const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('Maternal Care');
 
-  const DoctorCard = ({ item }: { item: typeof FAMILY_DOCTORS[0] }) => (
-    <View style={styles.docCard}>
-      <View style={styles.cardTop}>
-        <Image source={{ uri: item.image }} style={styles.docImage} />
-        <View style={styles.docMainInfo}>
-          <View style={styles.nameRow}>
-            <Text style={styles.docName}>{item.name}</Text>
-            <MaterialCommunityIcons name="check-decagram" size={18} color="#0EA5E9" />
+  const fetchFreelancers = async () => {
+    try {
+      if (!refreshing) setLoading(true);
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select(`id, full_name, specialization, experience, rating, reviews_count, avatar_url, is_online`)
+        .eq('role', 'freelancer')
+        .gte('rating', 3)
+        // In a real scenario, you'd filter by specialty based on selectedCategory
+        .ilike('specialty', `%${selectedCategory.split(' ')[0]}%`)
+        .order('rating', { ascending: false });
+
+      if (error) throw error;
+      setFreelancers(data || []);
+    } catch (error: any) {
+      console.error("Fetch Error:", error.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFreelancers();
+  }, [selectedCategory]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchFreelancers();
+  };
+
+  const FreelancerCard = ({ item }: { item: Freelancer }) => {
+    const [imageError, setImageError] = useState(false);
+
+    return (
+      <View style={styles.docCard}>
+        <View style={styles.cardTop}>
+          <View style={styles.imageContainer}>
+            {item.avatar_url && !imageError ? (
+              <Image source={{ uri: item.avatar_url }} style={styles.docImage} onError={() => setImageError(true)} />
+            ) : (
+              <View style={[styles.docImage, styles.placeholderImg]}>
+                <FontAwesome5 name="user-md" size={30} color="#0EA5E9" />
+              </View>
+            )}
+            {item.is_available && <View style={styles.onlineBadge} />}
           </View>
-          <Text style={styles.docSpecialty}>{item.specialty}</Text>
-          <View style={styles.ratingRow}>
-            <Ionicons name="star" size={14} color="#F59E0B" />
-            <Text style={styles.ratingText}>{item.rating} ({item.reviews} reviews)</Text>
-            <Text style={styles.expText}>• {item.experience} exp</Text>
+          
+          <View style={styles.docMainInfo}>
+            <View style={styles.nameRow}>
+              <Text style={styles.docName}>{item.full_name}</Text>
+              <MaterialCommunityIcons name="check-decagram" size={18} color="#0EA5E9" />
+            </View>
+            <Text style={styles.docSpecialty}>{item.specialty || 'Specialized Freelancer'}</Text>
+            <View style={styles.ratingRow}>
+              <Ionicons name="star" size={14} color="#F59E0B" />
+              <Text style={styles.ratingText}>{item.rating?.toFixed(1) || '5.0'} • {item.experience || '8+ years'} exp</Text>
+            </View>
           </View>
         </View>
-      </View>
 
-      <View style={styles.cardDivider} />
-
-      <View style={styles.cardActions}>
-        <TouchableOpacity style={styles.chatBtn} onPress={() => router.push("/(patient-dashboard)/chat")}>
-          <Ionicons name="chatbubble-ellipses-outline" size={20} color="#0EA5E9" />
-          <Text style={styles.chatBtnText}>Consult</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.bookBtn, !item.available && styles.disabledBtn]}
-          disabled={!item.available}
-        >
-          <Text style={styles.bookBtnText}>{item.available ? "Book Home Visit" : "Fully Booked"}</Text>
-        </TouchableOpacity>
+        <View style={styles.subOfferBox}>
+           <View>
+              <Text style={styles.subLabel}>Monthly Home Subscription</Text>
+              <Text style={styles.subPrice}>K1,250 <Text style={styles.subPeriod}>/ month</Text></Text>
+           </View>
+           <TouchableOpacity 
+              style={styles.subscribeBtn}
+              onPress={() => router.push({
+                pathname: "/(patient-dashboard)/assign-freelancer",
+                params: { doctorId: item.id, doctorName: item.full_name, plan: selectedCategory }
+              })}
+            >
+              <Text style={styles.subscribeText}>View Offer</Text>
+           </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <LinearGradient colors={["#0F172A", "#0B3C5D", "#0EA5E9"]} style={styles.container}>
+      <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.container}>
         
-        {/* HEADER */}
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={26} color="#FFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Family Home-Care</Text>
-          <TouchableOpacity style={styles.searchBtn}>
-            <Ionicons name="search" size={22} color="#FFF" />
-          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Home Care Plans</Text>
+          <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <ScrollView 
+          showsVerticalScrollIndicator={false} 
+          contentContainerStyle={styles.scroll}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFF" />}
+        >
+          {/* SPECIALIZED CATEGORIES HORIZONTAL LIST */}
+          <Text style={styles.sectionLabel}>Select Specialization</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll}>
+            {CARE_CATEGORIES.map((cat) => (
+              <TouchableOpacity 
+                key={cat.id} 
+                onPress={() => setSelectedCategory(cat.title)}
+                style={[styles.catCard, selectedCategory === cat.title && { borderColor: cat.color, backgroundColor: 'rgba(255,255,255,0.05)' }]}
+              >
+                <View style={[styles.iconCircle, { backgroundColor: cat.color + '20' }]}>
+                  <FontAwesome5 name={cat.icon} size={20} color={cat.color} />
+                </View>
+                <Text style={styles.catTitle}>{cat.title}</Text>
+                <Text style={styles.catDesc}>{cat.description}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <View style={styles.listHeader}>
+            <Text style={styles.sectionLabel}>{selectedCategory} Specialists</Text>
+            <Text style={styles.resultCount}>{freelancers.length} Found</Text>
+          </View>
           
-          {/* BANNER */}
-          <View style={styles.promoBanner}>
-            <View style={styles.promoContent}>
-              <Text style={styles.promoTitle}>Personalized Care</Text>
-              <Text style={styles.promoSub}>Access Zambia's top specialists for your entire family's needs.</Text>
+          {loading && !refreshing ? (
+            <ActivityIndicator size="large" color="#0EA5E9" style={{ marginTop: 40 }} />
+          ) : freelancers.length === 0 ? (
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="account-search-outline" size={60} color="rgba(255,255,255,0.2)" />
+              <Text style={styles.emptyText}>No specialists in this category yet.</Text>
             </View>
-            <MaterialCommunityIcons name="home-heart" size={50} color="rgba(255,255,255,0.4)" />
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionLabel}>Top Recommended Doctors</Text>
-            <TouchableOpacity><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
-          </View>
-          
-          {FAMILY_DOCTORS.map((doc) => (
-            <DoctorCard key={doc.id} item={doc} />
-          ))}
-
-          {/* EMERGENCY CTA */}
-          <TouchableOpacity style={styles.emergencyBox}>
-            <LinearGradient 
-              colors={["#EF4444", "#991B1B"]} 
-              start={{x: 0, y: 0}} 
-              end={{x: 1, y: 0}} 
-              style={styles.emergencyGradient}
-            >
-              <Ionicons name="notifications-outline" size={24} color="#FFF" />
-              <View>
-                <Text style={styles.emergencyTitle}>Emergency Dispatch</Text>
-                <Text style={styles.emergencySub}>Request an immediate home visit now</Text>
-              </View>
-            </LinearGradient>
-          </TouchableOpacity>
+          ) : (
+            freelancers.map((item) => <FreelancerCard key={item.id} item={item} />)
+          )}
 
         </ScrollView>
       </LinearGradient>
@@ -138,54 +180,51 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#0F172A" },
   container: { flex: 1 },
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15 },
-  headerTitle: { fontSize: 20, fontWeight: '800', color: '#FFF' },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: '#FFF' },
   backBtn: { width: 40 },
-  searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  scroll: { paddingBottom: 60 },
+  sectionLabel: { fontSize: 12, fontWeight: '900', color: '#BAE6FD', letterSpacing: 1.2, textTransform: 'uppercase', paddingHorizontal: 20, marginBottom: 15 },
   
-  scroll: { paddingHorizontal: 20, paddingBottom: 60 },
+  catScroll: { paddingLeft: 20, marginBottom: 30 },
+  catCard: { backgroundColor: 'rgba(255,255,255,0.03)', width: 140, padding: 15, borderRadius: 20, marginRight: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  iconCircle: { width: 45, height: 45, borderRadius: 15, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  catTitle: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  catDesc: { color: '#94A3B8', fontSize: 10, marginTop: 4 },
 
-  promoBanner: { 
-    flexDirection: 'row', 
-    backgroundColor: 'rgba(255,255,255,0.1)', 
-    padding: 22, 
-    borderRadius: 28, 
-    marginTop: 10, 
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)'
-  },
-  promoContent: { flex: 1 },
-  promoTitle: { fontSize: 18, fontWeight: '900', color: '#FFF' },
-  promoSub: { fontSize: 13, color: '#BAE6FD', marginTop: 4, lineHeight: 18 },
+  listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 20 },
+  resultCount: { color: '#94A3B8', fontSize: 12, fontWeight: '700' },
 
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 25, marginBottom: 15 },
-  sectionLabel: { fontSize: 12, fontWeight: '900', color: '#BAE6FD', letterSpacing: 1.2, textTransform: 'uppercase' },
-  seeAll: { color: '#0EA5E9', fontSize: 13, fontWeight: '700' },
-
-  docCard: { backgroundColor: '#FFF', borderRadius: 24, padding: 18, marginBottom: 15, elevation: 4 },
+  docCard: { backgroundColor: '#FFF', borderRadius: 24, padding: 18, marginHorizontal: 20, marginBottom: 15 },
   cardTop: { flexDirection: 'row', gap: 15 },
-  docImage: { width: 70, height: 70, borderRadius: 20 },
+  imageContainer: { position: 'relative' },
+  docImage: { width: 65, height: 65, borderRadius: 18 },
+  placeholderImg: { backgroundColor: '#F0F9FF', justifyContent: 'center', alignItems: 'center' },
+  onlineBadge: { position: 'absolute', bottom: -2, right: -2, width: 14, height: 14, borderRadius: 7, backgroundColor: '#22C55E', borderWidth: 2, borderColor: '#FFF' },
   docMainInfo: { flex: 1, justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  docName: { fontSize: 17, fontWeight: '800', color: '#0F172A' },
-  docSpecialty: { fontSize: 13, color: '#64748B', marginTop: 2 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
+  docName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  docSpecialty: { fontSize: 12, color: '#64748B' },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   ratingText: { fontSize: 12, fontWeight: '700', color: '#1E293B' },
-  expText: { fontSize: 12, color: '#94A3B8' },
 
-  cardDivider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 15 },
-
-  cardActions: { flexDirection: 'row', gap: 10 },
-  chatBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 15, borderWidth: 1, borderColor: '#E0F2FE' },
-  chatBtnText: { color: '#0EA5E9', fontWeight: '800', fontSize: 14 },
-  bookBtn: { flex: 2, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', borderRadius: 15, paddingVertical: 12 },
-  bookBtnText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
-  disabledBtn: { backgroundColor: '#CBD5E1' },
-
-  emergencyBox: { marginTop: 20, borderRadius: 24, overflow: 'hidden' },
-  emergencyGradient: { flexDirection: 'row', alignItems: 'center', padding: 20, gap: 15 },
-  emergencyTitle: { color: '#FFF', fontSize: 16, fontWeight: '900' },
-  emergencySub: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' }
+  subOfferBox: { 
+    marginTop: 15, 
+    padding: 15, 
+    backgroundColor: '#F8FAFC', 
+    borderRadius: 18, 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F1F5F9'
+  },
+  subLabel: { fontSize: 10, color: '#64748B', fontWeight: '700', textTransform: 'uppercase' },
+  subPrice: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginTop: 2 },
+  subPeriod: { fontSize: 12, color: '#94A3B8', fontWeight: '500' },
+  subscribeBtn: { backgroundColor: '#0F172A', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
+  subscribeText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
+  emptyState: { alignItems: 'center', marginTop: 40 },
+  emptyText: { color: '#94A3B8', fontSize: 14, marginTop: 10 }
 });
 
 export default HomeCareScreen;

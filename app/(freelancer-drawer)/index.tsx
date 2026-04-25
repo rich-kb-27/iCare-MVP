@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -61,8 +61,6 @@ const DoctorDashboard = () => {
       if (!user) return;
 
       const now = new Date().toISOString();
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
       const endOfToday = new Date();
       endOfToday.setHours(23, 59, 59, 999);
 
@@ -82,10 +80,14 @@ const DoctorDashboard = () => {
         setIsActive(prof.is_online ?? false);
       }
 
-      // 2. Stats & BADGE COUNTS
+      // 2. Stats & BADGE COUNTS - Filtered by "NOW" to keep it real-time
       const [subRes, slotRes, msgRes, notifRes] = await Promise.all([
         supabase.from("subscriptions").select("*", { count: "exact", head: true }).eq("doctor_id", user.id).eq("status", "active"),
-        supabase.from("schedules").select("*", { count: "exact", head: true }).eq("doctor_id", user.id).gte("start_time", startOfToday.toISOString()).lte("start_time", endOfToday.toISOString()),
+        supabase.from("schedules")
+          .select("*", { count: "exact", head: true })
+          .eq("doctor_id", user.id)
+          .gte("start_time", now) // Changed from startOfToday to now
+          .lte("start_time", endOfToday.toISOString()),
         supabase.from("messages").select("*", { count: "exact", head: true }).eq("receiver_id", user.id).eq("is_read", false),
         supabase.from("notifications").select("*", { count: "exact", head: true }).eq("user_id", user.id).eq("is_read", false),
       ]);
@@ -103,7 +105,7 @@ const DoctorDashboard = () => {
         .select("id, patient_id, patient_name, start_time, doctor_notes")
         .eq("doctor_id", user.id)
         .not("patient_id", "is", null) 
-        .gte("start_time", now)
+        .gte("start_time", now) // Ensure it's in the future
         .order("start_time", { ascending: true })
         .limit(1)
         .maybeSingle();
@@ -117,6 +119,8 @@ const DoctorDashboard = () => {
           .eq("id", upcoming.patient_id)
           .maybeSingle();
         setPatientAvatar(pAvatar?.avatar_url || null);
+      } else {
+        setPatientAvatar(null);
       }
 
     } catch (err) {
@@ -126,16 +130,22 @@ const DoctorDashboard = () => {
     }
   }, [user]);
 
-  // --- REAL-TIME & APPSTATE SYNC ---
+  // --- REAL-TIME, APPSTATE, & TIME TICKER SYNC ---
   useEffect(() => {
     if (!user) return;
     
     fetchDashboardData();
 
-    // Unique channel to avoid stale connections
+    // 1. DATABASE REAL-TIME LISTENERS
     const channelId = `doctor_dash_${user.id}_${Date.now()}`;
     const channel = supabase
       .channel(channelId)
+      .on("postgres_changes", { 
+          event: "*", 
+          schema: "public", 
+          table: "schedules", 
+          filter: `doctor_id=eq.${user.id}` 
+      }, () => fetchDashboardData())
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` }, () => fetchDashboardData())
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` }, () => fetchDashboardData())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls", filter: `doctor_id=eq.${user.id}` }, (payload) => {
@@ -148,7 +158,13 @@ const DoctorDashboard = () => {
       })
       .subscribe();
 
-    // Refresh when user returns to app
+    // 2. TIME TICKER: Refresh every 60 seconds to clear out passed appointments automatically
+    const timer = setInterval(() => {
+        console.log("Minute tick: Checking for expired appointments...");
+        fetchDashboardData();
+    }, 60000);
+
+    // 3. APP STATE SYNC
     const appStateSub = AppState.addEventListener("change", (nextState) => {
       if (nextState === "active") {
         fetchDashboardData();
@@ -158,6 +174,7 @@ const DoctorDashboard = () => {
     return () => { 
       supabase.removeChannel(channel); 
       appStateSub.remove();
+      clearInterval(timer); // Clean up timer
     };
   }, [user, fetchDashboardData]);
 
@@ -230,7 +247,7 @@ const DoctorDashboard = () => {
             </View>
 
             <View style={styles.statsGrid}>
-              <StatBox icon="calendar-check" label="Today's Slots" value={stats.slots} color="#0EA5E9" />
+              <StatBox icon="calendar-check" label="Slots Left Today" value={stats.slots} color="#0EA5E9" />
               <StatBox icon="bell-ring" label="Alerts" value={alertCount > 0 ? alertCount.toString() : "0"} color="#F43F5E" />
               <StatBox icon="account-group" label="Subscribers" value={stats.subs} color="#10B981" />
             </View>
@@ -282,23 +299,19 @@ const DoctorDashboard = () => {
 
           <View style={styles.bottomTabs}>
             <TabItem icon="home" label="Home" active={pathname.includes("dashboard")} onPress={() => router.push("/(freelancer-drawer)" as any)} />
-            
             <View>
               <TabItem icon="notifications" label="Alerts" onPress={() => router.push("/(freelancer-dashboard)/alerts" as any)} />
               {alertCount > 0 && <View style={styles.tabBadge}><Text style={styles.badgeText}>{alertCount}</Text></View>}
             </View>
-
             <View style={styles.middleTabContainer}>
               <TouchableOpacity style={styles.middleButton} onPress={() => router.push("/(freelancer-dashboard)/checkup" as any)}>
                 <MaterialCommunityIcons name="stethoscope" size={30} color="#FFF" />
               </TouchableOpacity>
             </View>
-
             <View>
               <TabItem icon="chatbubble-ellipses" label="Chat" onPress={() => router.push("/(freelancer-dashboard)/chat" as any)} />
               {unreadChatCount > 0 && <View style={styles.tabBadge}><Text style={styles.badgeText}>{unreadChatCount}</Text></View>}
             </View>
-
             <TabItem icon="person" label="Profile" onPress={() => router.push("/(freelancer-drawer)/profile" as any)} />
           </View>
         </SafeAreaView>
