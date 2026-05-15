@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 
@@ -14,10 +14,28 @@ const HelpScreen = () => {
     textMuted: '#94A3B8' 
   };
 
-  const HelpOption = ({ icon, title, sub, onPress, color = '#0EA5E9' }: any) => (
+  const CONTACT = {
+    email: 'kadobitech@gmail.com',
+    whatsapp: '+260776201014'
+  };
+
+  const handleSupportEmail = (subject = "General Inquiry") => {
+    Linking.openURL(`mailto:${CONTACT.email}?subject=${encodeURIComponent(subject)}`);
+  };
+
+  const handleWhatsApp = () => {
+    // Reverted to your working protocol version
+    Linking.openURL(`whatsapp://send?phone=${CONTACT.whatsapp}&text=${encodeURIComponent("Hello! I need help with...")}`);
+  };
+
+  const HelpOption = ({ icon, title, sub, onPress, color = '#0EA5E9', isFontAwesome = false }: any) => (
     <TouchableOpacity style={styles.helpCard} onPress={onPress}>
       <View style={[styles.iconCircle, { backgroundColor: `${color}15` }]}>
-        <Ionicons name={icon} size={24} color={color} />
+        {isFontAwesome ? (
+          <FontAwesome name={icon} size={24} color={color} />
+        ) : (
+          <Ionicons name={icon} size={24} color={color} />
+        )}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.cardTitle}>{title}</Text>
@@ -43,17 +61,19 @@ const HelpScreen = () => {
           <Text style={styles.sectionLabel}>Contact Us</Text>
           
           <HelpOption 
-            icon="chatbubbles-outline" 
-            title="Live Chat" 
-            sub="Speak with our medical assistants" 
-            onPress={() => router.push("/(patient-dashboard)/chat")}
+            icon="whatsapp" 
+            title="WhatsApp Support" 
+            sub="Direct chat with our team" 
+            color="#22C55E"
+            isFontAwesome={true}
+            onPress={handleWhatsApp}
           />
 
           <HelpOption 
             icon="mail-outline" 
             title="Email Support" 
             sub="Get a response within 24 hours" 
-            onPress={() => Linking.openURL('mailto:support@icaremvp.com')}
+            onPress={() => handleSupportEmail()}
           />
 
           <Text style={styles.sectionLabel}>Emergency</Text>
@@ -66,13 +86,20 @@ const HelpScreen = () => {
             onPress={() => Linking.openURL('tel:911')}
           />
 
-          {/* FAQ Section with fixed styles */}
           <View style={styles.faqSection}>
             <Text style={styles.sectionLabel}>Common Questions</Text>
-            {['How to book an appointment?', 'Viewing my lab reports', 'Updating insurance info'].map((q, i) => (
-              <TouchableOpacity key={i} style={styles.faqItem}>
+            {[
+              'How to find care?', 
+              'How to book an appointment?', 
+              'Viewing my lab reports'
+            ].map((q, i) => (
+              <TouchableOpacity 
+                key={i} 
+                style={styles.faqItem} 
+                onPress={() => handleSupportEmail(`Question: ${q}`)}
+              >
                 <Text style={styles.faqText}>{q}</Text>
-                <Ionicons name="add" size={20} color={THEME.sky} />
+                <Ionicons name="send-outline" size={18} color={THEME.sky} />
               </TouchableOpacity>
             ))}
           </View>
@@ -127,8 +154,6 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   cardSub: { fontSize: 13, color: '#64748B', marginTop: 2 },
-  
-  // FIXED: Added missing faqSection style
   faqSection: {
     marginTop: 10,
     marginBottom: 30

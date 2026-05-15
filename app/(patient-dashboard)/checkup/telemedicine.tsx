@@ -7,7 +7,7 @@ import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router'; 
 import { 
   createAgoraRtcEngine, ChannelProfileType, ClientRoleType, RtcSurfaceView, 
-  VideoMirrorModeType, IRtcEngine, RenderModeType
+  VideoMirrorModeType, IRtcEngine, RenderModeType, AreaCode
 } from 'react-native-agora';
 import { 
   Mic, MicOff, Video, VideoOff, PhoneOff, SwitchCamera, Radio, Star, CheckCircle2, X, ChevronRight
@@ -38,8 +38,8 @@ export default function VideoCallScreen() {
   const [activePlanName, setActivePlanName] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const localUid = 2;
-  const channelName = (paramChannel as string);
+  const channelName = paramChannel || String(callId);
+  const localUid = 100;
 
   // 1. EXIT FLOW: The Handshake to Ratings Screen
   const exitCall = () => {
@@ -78,57 +78,66 @@ export default function VideoCallScreen() {
   }, [callId]);
 
   useEffect(() => {
-    if (channelName) {
-        init();
-    }
-    return () => {
-      engine.current.leaveChannel();
-      engine.current.release();
-    };
-  }, [channelName]);
+  if (channelName) {
+    console.log("🚀 Patient attempting to join channel:", channelName);
+    init();
+  }
+}, [channelName]);
 
   const init = async () => {
-    try {
-      if (Platform.OS === 'android') {
-        await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-        ]);
-      }
-      
-      engine.current.initialize({ appId: APP_ID });
-      
-      engine.current.registerEventHandler({
-        onJoinChannelSuccess: () => {
-          setJoined(true);
-          if (callId) {
-            supabase.from('calls')
-              .update({ status: 'active' })
-              .eq('id', callId)
-              .then(() => console.log("Session marked active"));
-          }
-        },
-        onUserJoined: (_connection, uid) => {
-          setRemoteUid(uid);
-        },
-        onUserOffline: () => {
-          // If doctor hangs up, patient goes to rating
-          setRemoteUid(0);
-          exitCall();
-        },
-      });
-
-      engine.current.enableVideo();
-      engine.current.startPreview();
-
-      engine.current.joinChannel('', channelName, localUid, {
-        clientRoleType: ClientRoleType.ClientRoleBroadcaster,
-        channelProfile: ChannelProfileType.ChannelProfileCommunication,
-      });
-    } catch (e) { 
-        console.error("Agora Init Error:", e); 
+  try {
+    if (Platform.OS === 'android') {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+      ]);
     }
-  };
+    
+    engine.current.initialize({ 
+      appId: APP_ID,
+      // Helps connection stability across different networks
+      areaCode: AreaCode.AreaCodeGlobal 
+    });
+    
+    engine.current.registerEventHandler({
+      onJoinChannelSuccess: (connection) => {
+        setJoined(true);
+        console.log("✅ Patient Success: Joined channel", connection.channelId);
+        
+        if (callId) {
+          supabase.from('calls')
+            .update({ status: 'active' })
+            .eq('id', callId)
+            .then(() => console.log("Session marked active in DB"));
+        }
+      },
+      onUserJoined: (_connection, uid) => {
+        console.log("👤 Doctor Joined! UID:", uid);
+        setRemoteUid(uid);
+      },
+      onUserOffline: () => {
+        setRemoteUid(0);
+        exitCall();
+      },
+    });
+
+    engine.current.enableVideo();
+    engine.current.enableAudio(); // Explicitly enable audio
+    engine.current.startPreview();
+
+    // Join using the UUID (channelName)
+    engine.current.joinChannel('', channelName, localUid, {
+      clientRoleType: ClientRoleType.ClientRoleBroadcaster,
+      channelProfile: ChannelProfileType.ChannelProfileCommunication,
+      publishMicrophoneTrack: true,
+      publishCameraTrack: true,
+      autoSubscribeAudio: true,
+      autoSubscribeVideo: true,
+    });
+  } catch (e) { 
+    console.error("Agora Init Error:", e); 
+  }
+};
 
   const handleSubscribe = async (plan: typeof SUBSCRIPTION_PLANS[0]) => {
     setLoading(true);

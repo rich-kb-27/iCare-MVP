@@ -1,238 +1,309 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  ActivityIndicator, 
-  RefreshControl,
+import React, { useEffect, ReactElement, useState, useRef } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
   TextInput,
-  Alert
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '../../context/AuthContext';
-import { StatusBar } from 'expo-status-bar';
+  TouchableOpacity,
+  FlatList,
+  Animated,
+  Image,
+  Platform,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { supabase } from "../../lib/supabase"; 
+import { StatusBar } from "expo-status-bar";
 
-// STEP 1: Define the Interface to fix those "never" type errors
-interface LabReport {
-  id: string;
-  test_name: string;
-  lab_name: string;
-  patient_id: string;
-  date?: string; // Optional if you have a date column
-  status: 'Ready' | 'Pending';
-  created_at: string;
-}
+type Status = "loading" | "available" | "unavailable";
 
-const LabReportsScreen = () => {
+// Filter Categories - Integrated with your DB 'facility_type' column
+const CATEGORIES = [
+  { id: 'all', label: 'All', icon: 'th-large' },
+  { id: 'hospital', label: 'Hospitals', icon: 'hospital' },
+  { id: 'clinic', label: 'Clinics', icon: 'clinic-medical' },
+  { id: 'pharmacy', label: 'Pharmacies', icon: 'pills' },
+  { id: 'optics', label: 'Optics', icon: 'glasses' },
+  { id: 'dental', label: 'Dental', icon: 'tooth' },
+  { id: 'lab', label: 'Labs', icon: 'flask' },
+  { id: 'other', label: 'Others', icon: 'plus-circle' }, 
+];
+
+export default function SearchFacilities() {
   const router = useRouter();
-  const { user } = useAuth();
-  
-  // STEP 2: Explicitly type the state as an array of LabReport objects
-  const [reports, setReports] = useState<LabReport[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [status, setStatus] = useState<Status>("loading");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [facilities, setFacilities] = useState<any[]>([]);
+  const pulse = useRef(new Animated.Value(1)).current;
 
-  const fetchReports = async () => {
-    try {
-      if (!refreshing) setLoading(true);
-      
-      const { data, error } = await supabase
-        .from('lab_reports')
-        .select('*')
-        .eq('patient_id', user?.id)
-        .order('created_at', { ascending: false });
+  // --- PULSE ANIMATION ---
+  useEffect(() => {
+    if (status === "loading") {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, { toValue: 1.1, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      ).start();
+    }
+  }, [status]);
 
-      if (error) throw error;
-      
-      // STEP 3: Cast the data to the LabReport array type
-      setReports((data as LabReport[]) || []);
-    } catch (e: any) {
-      console.error("Fetch Error:", e.message);
-      Alert.alert("Error", "Could not load lab reports.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  // --- FETCH LOGIC WITH CATEGORY & TEXT FILTER ---
+  const fetchFacilities = async (text: string, category: string) => {
+    setStatus("loading");
+    
+    let query = supabase
+      .from("profiles") 
+      .select("*")
+      .eq("role", "facility");
+
+    if (text) {
+      query = query.ilike("full_name", `%${text}%`);
+    }
+
+    if (category !== 'all') {
+      if (category === 'other') {
+        // Scalability: Catch types not in our primary list
+        const standardTypes = ['hospital', 'clinic', 'pharmacy', 'optics', 'dental', 'lab'];
+        query = query.not('facility_type', 'in', `(${standardTypes.join(',')})`);
+      } else {
+        query = query.eq("facility_type", category);
+      }
+    }
+
+    const { data, error } = await query;
+
+    if (error || !data || data.length === 0) {
+      setFacilities([]);
+      setStatus("unavailable");
+    } else {
+      setFacilities(data);
+      setStatus("available");
     }
   };
 
   useEffect(() => {
-    if (user) fetchReports();
-  }, [user]);
+    const delayDebounce = setTimeout(() => {
+      fetchFacilities(searchQuery, selectedCategory);
+    }, 300);
+    return () => clearTimeout(delayDebounce);
+  }, [searchQuery, selectedCategory]);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchReports();
-  };
+  const renderCategory = ({ item }: any) => (
+    <TouchableOpacity 
+      style={[styles.catChip, selectedCategory === item.id && styles.activeCatChip]}
+      onPress={() => setSelectedCategory(item.id)}
+    >
+      <FontAwesome5 
+        name={item.icon} 
+        size={14} 
+        color={selectedCategory === item.id ? "#0F172A" : "#94A3B8"} 
+      />
+      <Text style={[styles.catText, selectedCategory === item.id && styles.activeCatText]}>
+        {item.label}
+      </Text>
+    </TouchableOpacity>
+  );
 
-  // Filter logic for the search bar
-  const filteredReports = reports.filter(report => 
-    report.test_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    report.lab_name.toLowerCase().includes(searchQuery.toLowerCase())
+  const renderFacility = ({ item }: any) => (
+    <TouchableOpacity 
+      style={styles.facilityCard}
+      onPress={() => router.push({
+        pathname: "/facility-checkin",
+        params: { facilityId: item.id, facilityName: item.full_name, facilityType: item.facility_type }
+      })}
+    >
+      <View style={styles.cardHeader}>
+        <View style={styles.imageContainer}>
+          <Image 
+            source={{ uri: item.avatar_url || "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?q=80&w=500" }} 
+            style={styles.facilityImg} 
+          />
+          <View style={styles.typeBadge}>
+            <Text style={styles.typeText}>
+              {item.facility_type ? item.facility_type.toUpperCase().replace('_', ' ') : "FACILITY"}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.info}>
+          <Text style={styles.facilityName} numberOfLines={1}>{item.full_name}</Text>
+          
+          <View style={styles.locationRow}>
+            <Ionicons name="location-sharp" size={14} color="#0EA5E9" />
+            <Text style={styles.locationText} numberOfLines={1}>
+              {item.address || "Lusaka, Zambia"}
+            </Text>
+          </View>
+
+          <View style={styles.metaRow}>
+            <View style={styles.ratingBox}>
+              <Ionicons name="star" size={12} color="#FBBF24" />
+              <Text style={styles.ratingText}>{item.rating || "5.0"}</Text>
+            </View>
+            <Text style={styles.distanceText}>• Verified</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.cardFooter}>
+        <TouchableOpacity 
+            style={styles.checkInBtn}
+            onPress={() => router.push({
+                pathname: "/freelancer-facility-checkin",
+                params: { facilityId: item.id, facilityName: item.full_name, facilityType: item.facility_type }
+            })}
+        >
+          <Text style={styles.checkInBtnText}>Check In & Consult</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.directionBtn}>
+          <MaterialCommunityIcons name="directions" size={22} color="#FFF" />
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
-      {/* Light status bar for the dark gradient top */}
-      <StatusBar style="light" />
-
-      <LinearGradient colors={["#0F172A", "#0B3C5D"]} style={styles.topSection}>
-        <SafeAreaView edges={['top']}>
-          <View style={styles.navContent}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={26} color="#FFF" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Medical Reports</Text>
-            <View style={{ width: 40 }} /> 
-          </View>
-
-          <View style={styles.searchWrapper}>
+    <View style={{ flex: 1, backgroundColor: "#0F172A" }}>
+      <StatusBar style="light" translucent={true} />
+      <LinearGradient colors={["#0F172A", "#0B3C5D"]} style={styles.container}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          
+          {/* Header & Search */}
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>Find Care</Text>
             <View style={styles.searchBar}>
-              <Ionicons name="search" size={18} color="#94A3B8" />
-              <TextInput 
-                placeholder="Search tests or labs..." 
+              <Ionicons name="search" size={20} color="#94A3B8" />
+              <TextInput
+                placeholder="Search hospitals or clinics..."
                 placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
+                style={styles.input}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
             </View>
           </View>
+
+          {/* Horizontal Filters */}
+          <View>
+            <FlatList
+              horizontal
+              data={CATEGORIES}
+              renderItem={renderCategory}
+              keyExtractor={(item) => item.id}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.catList}
+            />
+          </View>
+
+          {/* Results Area */}
+          <View style={styles.content}>
+            {status === "loading" ? (
+              <View style={styles.center}>
+                <Animated.View style={{ transform: [{ scale: pulse }] }}>
+                  <MaterialCommunityIcons name="hospital-marker" size={80} color="#0EA5E9" />
+                </Animated.View>
+                <Text style={styles.statusText}>Searching iCare Network...</Text>
+              </View>
+            ) : status === "unavailable" ? (
+              <View style={styles.center}>
+                <Ionicons name="business-outline" size={80} color="#334155" />
+                <Text style={styles.statusText}>No results in this category</Text>
+                <TouchableOpacity onPress={() => {setSearchQuery(""); setSelectedCategory("all");}}>
+                  <Text style={styles.retryText}>Clear Filters</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <FlatList
+                data={facilities}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={renderFacility}
+                contentContainerStyle={styles.list}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+          </View>
         </SafeAreaView>
       </LinearGradient>
-
-      <View style={styles.bottomSection}>
-        <Text style={styles.sectionTitle}>Recent Results</Text>
-        
-        <ScrollView 
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0EA5E9" />
-          }
-        >
-          {loading && !refreshing ? (
-            <ActivityIndicator size="large" color="#0EA5E9" style={{ marginTop: 40 }} />
-          ) : filteredReports.length === 0 ? (
-            <View style={styles.emptyState}>
-              <MaterialCommunityIcons name="file-search-outline" size={60} color="#E2E8F0" />
-              <Text style={styles.emptyText}>
-                {searchQuery ? "No matching reports" : "No reports found yet"}
-              </Text>
-            </View>
-          ) : (
-            filteredReports.map((report) => (
-              <TouchableOpacity key={report.id} style={styles.reportCard} activeOpacity={0.7}>
-                <View style={styles.iconContainer}>
-                   <MaterialCommunityIcons 
-                    name="test-tube" 
-                    size={22} 
-                    color={report.status === 'Ready' ? '#0EA5E9' : '#94A3B8'} 
-                  />
-                </View>
-                
-                <View style={styles.cardInfo}>
-                  <Text style={styles.testName}>{report.test_name}</Text>
-                  <Text style={styles.labName}>{report.lab_name}</Text>
-                </View>
-
-                <View style={[
-                  styles.statusBadge, 
-                  { backgroundColor: report.status === 'Ready' ? '#DCFCE7' : '#F1F5F9' }
-                ]}>
-                  <Text style={[
-                    styles.statusText, 
-                    { color: report.status === 'Ready' ? '#166534' : '#64748B' }
-                  ]}>
-                    {report.status}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))
-          )}
-        </ScrollView>
-      </View>
-
-      <TouchableOpacity 
-        style={styles.fab}
-        onPress={() => Alert.alert("Upload", "Upload feature coming soon!")}
-      >
-        <Ionicons name="add" size={30} color="#FFF" />
-      </TouchableOpacity>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFF" },
-  topSection: { 
-    paddingBottom: 30, 
-    borderBottomLeftRadius: 40, 
-    borderBottomRightRadius: 40 
-  },
-  navContent: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center',
-    paddingHorizontal: 10
-  },
-  backBtn: { padding: 15 },
-  headerTitle: { color: '#FFF', fontSize: 20, fontWeight: '900' },
-  searchWrapper: { paddingHorizontal: 25, marginTop: 10 },
+  container: { flex: 1 },
+  header: { paddingHorizontal: 24, paddingTop: Platform.OS === 'android' ? 10 : 0 },
+  headerTitle: { color: "#FFF", fontSize: 28, fontWeight: "900", marginBottom: 15 },
   searchBar: { 
     flexDirection: 'row', 
-    backgroundColor: '#FFF', 
-    borderRadius: 15, 
+    backgroundColor: 'rgba(255,255,255,0.08)', 
+    borderRadius: 18, 
     paddingHorizontal: 15, 
-    paddingVertical: 12, 
-    alignItems: 'center' 
+    height: 56, 
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)'
   },
-  searchInput: { flex: 1, marginLeft: 10, fontSize: 15, color: '#0F172A' },
-  bottomSection: { flex: 1, padding: 25, marginTop: -20 },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 20 },
-  reportCard: { 
+  input: { flex: 1, marginLeft: 10, color: '#FFF', fontSize: 16 },
+  
+  catList: { paddingHorizontal: 24, paddingVertical: 20, gap: 10 },
+  catChip: { 
     flexDirection: 'row', 
     alignItems: 'center', 
-    padding: 15, 
-    borderRadius: 20, 
-    borderWidth: 1, 
-    borderColor: '#E2E8F0', 
-    marginBottom: 12,
-    backgroundColor: '#F8FAFC'
+    backgroundColor: 'rgba(255,255,255,0.06)', 
+    paddingHorizontal: 16, 
+    paddingVertical: 12, 
+    borderRadius: 16, 
+    gap: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)'
   },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#FFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12
-  },
-  cardInfo: { flex: 1 },
-  testName: { fontSize: 15, fontWeight: '800', color: '#1E293B' },
-  labName: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  statusText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
-  fab: { 
-    position: 'absolute', 
-    bottom: 30, 
-    right: 25, 
-    width: 60, 
-    height: 60, 
-    borderRadius: 30, 
-    backgroundColor: '#0EA5E9', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    elevation: 5 
-  },
-  emptyState: { alignItems: 'center', marginTop: 50 },
-  emptyText: { color: '#94A3B8', marginTop: 10 }
-});
+  activeCatChip: { backgroundColor: '#BAE6FD', borderColor: '#BAE6FD' },
+  catText: { color: '#94A3B8', fontSize: 14, fontWeight: '700' },
+  activeCatText: { color: '#0F172A' },
 
-export default LabReportsScreen;
+  content: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
+  statusText: { color: '#BAE6FD', fontSize: 16, fontWeight: '600' },
+  retryText: { color: '#0EA5E9', fontWeight: '800', marginTop: 10 },
+  
+  list: { paddingHorizontal: 20, paddingBottom: 40 },
+  facilityCard: { 
+    backgroundColor: 'rgba(255,255,255,0.05)', 
+    borderRadius: 28, 
+    padding: 18, 
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)'
+  },
+  cardHeader: { flexDirection: 'row', gap: 18 },
+  imageContainer: { position: 'relative' },
+  facilityImg: { width: 95, height: 95, borderRadius: 22, backgroundColor: '#1E293B' },
+  typeBadge: { 
+    position: 'absolute', 
+    bottom: -6, 
+    alignSelf: 'center', 
+    backgroundColor: '#0EA5E9', 
+    paddingHorizontal: 10, 
+    paddingVertical: 3, 
+    borderRadius: 8 
+  },
+  typeText: { color: '#FFF', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  
+  info: { flex: 1, justifyContent: 'center' },
+  facilityName: { color: '#FFF', fontSize: 20, fontWeight: '800' },
+  locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 },
+  locationText: { color: '#94A3B8', fontSize: 13, flex: 1 },
+  
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10 },
+  ratingBox: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.1)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  ratingText: { color: '#FBBF24', fontSize: 12, fontWeight: '700' },
+  distanceText: { color: '#64748B', fontSize: 12, fontWeight: '600' },
+
+  cardFooter: { flexDirection: 'row', marginTop: 20, gap: 10 },
+  checkInBtn: { flex: 1, backgroundColor: 'rgba(14, 165, 233, 0.15)', height: 52, borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(14, 165, 233, 0.2)' },
+  checkInBtnText: { color: '#38BDF8', fontWeight: '800', fontSize: 15 },
+  directionBtn: { width: 52, height: 52, backgroundColor: '#0EA5E9', borderRadius: 16, justifyContent: 'center', alignItems: 'center' }
+});

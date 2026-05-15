@@ -162,7 +162,7 @@ export default function DrawerLayout() {
       <Drawer.Screen
         name="about"
         options={{
-          drawerLabel: "About KadobiTech",
+          drawerLabel: "About iCare",
           drawerIcon: ({ color }) => <Ionicons name="business-outline" size={22} color={color} />,
         }}
       />

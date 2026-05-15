@@ -61,38 +61,46 @@ const UserDashboard = () => {
   }, [user]);
 
   // --- REAL-TIME CALLS & DATA SYNC ---
-  useEffect(() => {
-    if (!user?.id) return;
+  // --- REAL-TIME CALLS & DATA SYNC ---
+useEffect(() => {
+  if (!user?.id) return;
 
-    fetchDashboardData();
+  fetchDashboardData();
 
-    // Unique channel to prevent stale WebSocket issues
-    const channelId = `patient_sync_${user.id}_${Date.now()}`;
-    const callChannel = supabase
-      .channel(channelId)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "calls", filter: `patient_id=eq.${user.id}` },
-        async (payload) => {
-          if (payload.new.status === 'ringing') {
-            const { data: doctorProf } = await supabase
-              .from('profiles')
-              .select('full_name, avatar_url, specialization')
-              .eq('id', payload.new.doctor_id)
-              .single();
+  const channelId = `patient_sync_${user.id}_${Date.now()}`;
+  const callChannel = supabase
+    .channel(channelId)
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "calls", filter: `patient_id=eq.${user.id}` },
+      async (payload) => {
+        const data = payload.new;
 
-            router.push({
-              pathname: "/(patient-dashboard)/incoming-call",
-              params: {
-                callId: payload.new.id,
-                doctorName: doctorProf?.full_name || "Specialist",
-                doctorAvatar: doctorProf?.avatar_url || "",
-                specialty: doctorProf?.specialization || "Healthcare Provider"
-              },
-            });
-          }
+        // 🛑 THE SHIELD: If I am the one who started this call, IGNORE IT.
+        if (data.initiated_by && String(data.initiated_by) === String(user.id)) {
+          console.log("Dashboard Listener: Blocked self-call.");
+          return; 
         }
-      )
+
+        if (data.status === 'ringing') {
+          const { data: doctorProf } = await supabase
+            .from('profiles')
+            .select('full_name, avatar_url, specialization')
+            .eq('id', data.doctor_id)
+            .single();
+
+          router.push({
+            pathname: "/(patient-dashboard)/incoming-call",
+            params: {
+              callId: data.id,
+              doctorName: doctorProf?.full_name || "Specialist",
+              doctorAvatar: doctorProf?.avatar_url || "",
+              specialty: doctorProf?.specialization || "Healthcare Provider"
+            },
+          });
+        }
+      }
+    )
       // Also listen for message/notification updates for badges
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` }, () => fetchDashboardData())
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` }, () => fetchDashboardData())

@@ -24,7 +24,7 @@ const CreatePrescription = () => {
   const { user } = useAuth();
 
   // State
-  const [subscribers, setSubscribers] = useState<any[]>([]);
+  const [checkedInPatients, setCheckedInPatients] = useState<any[]>([]);
   const [recentPrescriptions, setRecentPrescriptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -38,32 +38,32 @@ const CreatePrescription = () => {
 
   useEffect(() => {
     if (user?.id) {
-      fetchActiveSubscribers();
+      fetchCheckedInPatients();
       fetchRecentHistory();
     }
   }, [user]);
 
-  const fetchActiveSubscribers = async () => {
-    try {
-      const now = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("subscriptions")
-        .select(`
-          *,
-          patient:profiles!patient_id (full_name, avatar_url)
-        `)
-        .eq("doctor_id", user?.id)
-        .eq("status", "active")
-        .gt("expiry_date", now);
+  const fetchCheckedInPatients = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("check_ins")
+      .select(`
+        id,
+        patient_id,
+        reason_for_visit,
+        patient:profiles!patient_id (full_name, avatar_url)
+      `) // The !patient_id tells Supabase exactly which relationship to follow
+      .eq("facility_id", user?.id)
+      .eq("status", "seen");
 
-      if (error) throw error;
-      setSubscribers(data || []);
-    } catch (e: any) {
-      console.error("Fetch Error:", e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (error) throw error;
+    setCheckedInPatients(data || []);
+  } catch (e: any) {
+    console.error("Fetch Check-ins Error:", e.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const fetchRecentHistory = async () => {
     try {
@@ -84,13 +84,6 @@ const CreatePrescription = () => {
     }
   };
 
-  const generateRxRef = () => {
-    const prefix = "ICR";
-    const timestamp = Date.now().toString().slice(-5);
-    const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-    return `${prefix}-${timestamp}-${random}`;
-  };
-
   const handleIssuePrescription = async () => {
     if (!selectedPatient || !medication || !dosage || !duration) {
       Alert.alert("iCare", "Please complete all required fields.");
@@ -102,7 +95,8 @@ const CreatePrescription = () => {
       const now = new Date();
       const expiry = new Date();
       expiry.setDate(now.getDate() + 3);
-      const reference_id = generateRxRef();
+      
+      const reference_id = `ICR-${Date.now().toString().slice(-5)}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
 
       const { error } = await supabase.from("prescriptions").insert([
         {
@@ -122,11 +116,10 @@ const CreatePrescription = () => {
       if (error) throw error;
 
       Alert.alert(
-        "Prescription Authorized",
-        `Ref: ${reference_id}\n\nThis digital script is valid for 72 hours.`,
-        [{ text: "Great", onPress: () => router.back() }]
+        "Authorized",
+        `Ref: ${reference_id}\n\nPrescription sent to patient.`,
+        [{ text: "Done", onPress: () => router.back() }]
       );
-
     } catch (e: any) {
       Alert.alert("System Error", e.message);
     } finally {
@@ -138,41 +131,41 @@ const CreatePrescription = () => {
     <View style={{ flex: 1, backgroundColor: "#0F172A" }}>
       <LinearGradient colors={["#0F172A", "#1E293B"]} style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-          
-          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
               <Ionicons name="arrow-back" size={24} color="#FFF" />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Issue Prescription</Text>
-            {/* Added History Button in Header */}
-            <TouchableOpacity 
-              onPress={() => router.push("/view-prescription-history")}
-              style={styles.backBtn}
-            >
-              <MaterialCommunityIcons name="history" size={24} color="#0EA5E9" />
+            <Text style={styles.headerTitle}>New Prescription</Text>
+            <TouchableOpacity onPress={() => fetchCheckedInPatients()} style={styles.backBtn}>
+              <Ionicons name="refresh" size={22} color="#0EA5E9" />
             </TouchableOpacity>
           </View>
 
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === "ios" ? "padding" : "height"} 
-            style={{ flex: 1 }}
-          >
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
               
-              <Text style={styles.sectionLabel}>Authorized Patients</Text>
+              <Text style={styles.sectionLabel}>Active Check-ins</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.patientTray}>
                 {loading ? (
                   <ActivityIndicator color="#0EA5E9" style={{ marginLeft: 20 }} />
+                ) : checkedInPatients.length === 0 ? (
+                  <Text style={{ color: '#475569', marginLeft: 5, fontSize: 13 }}>No patients waiting</Text>
                 ) : (
-                  subscribers.map((item) => (
+                  checkedInPatients.map((item) => (
                     <TouchableOpacity 
                       key={item.id} 
                       onPress={() => setSelectedPatient(item)}
                       style={[styles.patientCard, selectedPatient?.id === item.id && styles.activePatientCard]}
                     >
                       <View style={styles.avatarWrapper}>
-                        <Image source={{ uri: item.patient?.avatar_url }} style={styles.avatar} />
+                        <Image 
+                          source={
+                            item.patient?.avatar_url 
+                              ? { uri: item.patient.avatar_url } 
+                              : { uri: `https://ui-avatars.com/api/?name=${item.patient?.full_name}&background=0EA5E9&color=fff` }
+                          } 
+                          style={styles.avatar} 
+                        />
                         {selectedPatient?.id === item.id && (
                           <View style={styles.checkBadge}>
                             <Ionicons name="checkmark" size={12} color="#FFF" />
@@ -188,12 +181,16 @@ const CreatePrescription = () => {
               {selectedPatient ? (
                 <View style={styles.formContainer}>
                   <View style={styles.securityHeader}>
-                    <MaterialCommunityIcons name="shield-lock-outline" size={20} color="#0EA5E9" />
-                    <Text style={styles.securityText}>Secure Digital Authorization</Text>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.securityText}>Authorized Script for:</Text>
+                        <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 16 }}>{selectedPatient.patient?.full_name}</Text>
+                        <Text style={{ color: '#64748B', fontSize: 12 }}>Reason: {selectedPatient.reason_for_visit}</Text>
+                    </View>
+                    <MaterialCommunityIcons name="shield-check" size={28} color="#0EA5E9" />
                   </View>
 
                   <View style={styles.inputGroup}>
-                    <Text style={styles.label}>MEDICATION NAME</Text>
+                    <Text style={styles.label}>MEDICATION</Text>
                     <TextInput 
                       style={styles.input} 
                       value={medication} 
@@ -206,68 +203,45 @@ const CreatePrescription = () => {
                   <View style={styles.row}>
                     <View style={[styles.inputGroup, { flex: 1, marginRight: 12 }]}>
                       <Text style={styles.label}>DOSAGE</Text>
-                      <TextInput 
-                        style={styles.input} 
-                        value={dosage} 
-                        onChangeText={setDosage} 
-                        placeholder="1x2 (Daily)" 
-                        placeholderTextColor="#475569" 
-                      />
+                      <TextInput style={styles.input} value={dosage} onChangeText={setDosage} placeholder="1x3" placeholderTextColor="#475569" />
                     </View>
                     <View style={[styles.inputGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>DURATION (DAYS)</Text>
-                      <TextInput 
-                        style={styles.input} 
-                        value={duration} 
-                        onChangeText={setDuration} 
-                        keyboardType="numeric" 
-                        placeholder="7" 
-                        placeholderTextColor="#475569" 
-                      />
+                      <Text style={styles.label}>DAYS</Text>
+                      <TextInput style={styles.input} value={duration} onChangeText={setDuration} keyboardType="numeric" placeholder="7" placeholderTextColor="#475569" />
                     </View>
                   </View>
 
                   <View style={styles.inputGroup}>
-                    <Text style={styles.label}>PHYSICIAN NOTES</Text>
-                    <TextInput 
-                      style={[styles.input, { height: 80, textAlignVertical: 'top', paddingTop: 15 }]} 
-                      value={instructions} 
-                      onChangeText={setInstructions} 
-                      multiline 
-                      placeholder="Special instructions..." 
-                      placeholderTextColor="#475569" 
-                    />
+                    <Text style={styles.label}>INSTRUCTIONS</Text>
+                    <TextInput style={[styles.input, { height: 80, paddingTop: 15 }]} value={instructions} onChangeText={setInstructions} multiline placeholder="Take after meals..." placeholderTextColor="#475569" />
                   </View>
 
-                  <TouchableOpacity 
-                    style={[styles.mainBtn, sending && { opacity: 0.7 }]} 
-                    onPress={handleIssuePrescription}
-                    disabled={sending}
-                  >
-                    {sending ? <ActivityIndicator color="#FFF" /> : <Text style={styles.mainBtnText}>Sign & Send Prescription</Text>}
+                  <TouchableOpacity style={styles.mainBtn} onPress={handleIssuePrescription} disabled={sending}>
+                    {sending ? <ActivityIndicator color="#FFF" /> : <Text style={styles.mainBtnText}>Sign & Authorize</Text>}
                   </TouchableOpacity>
                 </View>
               ) : (
-                /* History Section when no patient is selected */
                 <View style={{ marginTop: 20 }}>
-                   <Text style={styles.sectionLabel}>Recent Activity</Text>
-                   {recentPrescriptions.map((rx) => (
-                     <TouchableOpacity 
-                        key={rx.id} 
-                        style={styles.historyItem}
-                        onPress={() => router.push({
-                            pathname: "/view-prescription-history",
-                            params: { patientId: rx.patient_id }
-                        })}
-                     >
-                        <Image source={{ uri: rx.patient?.avatar_url }} style={styles.historyAvatar} />
+                    <Text style={styles.sectionLabel}>Recently Issued</Text>
+                    {recentPrescriptions.map((rx) => (
+                      <View key={rx.id} style={styles.historyItem}>
+                        <Image 
+                          source={
+                            rx.patient?.avatar_url 
+                              ? { uri: rx.patient.avatar_url } 
+                              : { uri: `https://ui-avatars.com/api/?name=${rx.patient?.full_name}&background=1E293B&color=fff` }
+                          } 
+                          style={styles.historyAvatar} 
+                        />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={styles.historyName}>{rx.patient?.full_name}</Text>
                             <Text style={styles.historyMed}>{rx.medication} — {rx.date}</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color="#475569" />
-                     </TouchableOpacity>
-                   ))}
+                        <View style={styles.statusBadge}>
+                           <Text style={styles.statusText}>{rx.status}</Text>
+                        </View>
+                      </View>
+                    ))}
                 </View>
               )}
             </ScrollView>
@@ -292,19 +266,20 @@ const styles = StyleSheet.create({
   checkBadge: { position: 'absolute', bottom: -2, right: -2, backgroundColor: '#0EA5E9', borderRadius: 10, padding: 3, borderWidth: 2, borderColor: '#0F172A' },
   patientName: { color: '#FFF', fontSize: 13, fontWeight: '600', marginTop: 8 },
   formContainer: { marginHorizontal: 20, marginTop: 20, backgroundColor: 'rgba(30, 41, 59, 0.5)', borderRadius: 30, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-  securityHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 20 },
-  securityText: { color: '#0EA5E9', fontSize: 13, fontWeight: '700' },
+  securityHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 20, backgroundColor: 'rgba(14, 165, 233, 0.1)', padding: 15, borderRadius: 20 },
+  securityText: { color: '#0EA5E9', fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
   inputGroup: { marginBottom: 15 },
   label: { color: '#475569', fontSize: 10, fontWeight: '900', marginBottom: 8, marginLeft: 5 },
   input: { backgroundColor: '#0F172A', borderRadius: 18, height: 55, paddingHorizontal: 20, color: '#FFF', fontSize: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   row: { flexDirection: 'row' },
   mainBtn: { backgroundColor: '#0EA5E9', height: 60, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   mainBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800' },
-  // History Item Styles
   historyItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', marginHorizontal: 20, padding: 15, borderRadius: 20, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   historyAvatar: { width: 45, height: 45, borderRadius: 15 },
   historyName: { color: '#FFF', fontSize: 14, fontWeight: '700' },
-  historyMed: { color: '#64748B', fontSize: 12, marginTop: 2 }
+  historyMed: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  statusBadge: { backgroundColor: 'rgba(16, 185, 129, 0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  statusText: { color: '#10B981', fontSize: 10, fontWeight: '800' }
 });
 
 export default CreatePrescription;

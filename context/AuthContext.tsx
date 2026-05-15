@@ -35,42 +35,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 🔔 Register push notifications
   const registerForPushNotificationsAsync = async (userId: string) => {
     if (!Device.isDevice) return;
-
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
-
       if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync();
         finalStatus = status;
       }
+      if (finalStatus !== 'granted') return;
 
-      if (finalStatus !== 'granted') {
-        console.log('Push notification permission denied');
-        return;
-      }
-
-      const projectId =
-        Constants.expoConfig?.extra?.eas?.projectId ||
-        Constants.easConfig?.projectId;
-
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
 
-      await supabase
-        .from('profiles')
-        .update({ expo_push_token: token })
-        .eq('id', userId);
-
-      console.log('✅ Push token saved for:', userId);
+      await supabase.from('profiles').update({ expo_push_token: token }).eq('id', userId);
     } catch (e) {
       console.error('❌ Notification error:', e);
     }
   };
 
-  // 🧠 Fetch user role safely
   const fetchRole = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -79,82 +63,63 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .eq('id', userId)
         .single();
 
-      if (error) {
-        console.log('❌ ROLE FETCH ERROR:', error.message);
-        return null;
-      }
-
+      if (error) return null;
       return data?.role ?? null;
     } catch (err) {
-      console.log('❌ ROLE FETCH EXCEPTION:', err);
       return null;
     }
   };
 
-  // 🚪 Sign out
   const signOut = async () => {
     try {
       if (session?.user) {
-        await supabase
-          .from('profiles')
-          .update({ expo_push_token: null })
-          .eq('id', session.user.id);
+        await supabase.from('profiles').update({ expo_push_token: null }).eq('id', session.user.id);
       }
-
       await supabase.auth.signOut();
-
       setSession(null);
       setRole(null);
     } catch (error) {
-      console.error('Sign out error:', error);
       await supabase.auth.signOut();
     }
   };
 
-  // 🚀 INIT + AUTH LISTENER
   useEffect(() => {
-    const init = async () => {
+    // 🛡️ INTERNAL HANDLER: Keeps the logic consistent
+    const handleAuthChange = async (event: string, currentSession: Session | null) => {
+      console.log('🔄 AUTH EVENT:', event);
+
+      // 🛑 GUARD: If the user updated their password, don't trigger the global "loading" state.
+      // This is what prevents the blank screen during reset.
+      if (event === 'USER_UPDATED') {
+        setSession(currentSession);
+        return; 
+      }
+
       setLoading(true);
+      setSession(currentSession);
 
-      const { data: { session } } = await supabase.auth.getSession();
-
-      setSession(session);
-
-      if (session?.user) {
-        const userRole = await fetchRole(session.user.id);
+      if (currentSession?.user) {
+        const userRole = await fetchRole(currentSession.user.id);
         setRole(userRole);
 
-        await registerForPushNotificationsAsync(session.user.id);
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+          await registerForPushNotificationsAsync(currentSession.user.id);
+        }
       } else {
         setRole(null);
       }
-
       setLoading(false);
     };
 
-    init();
+    // 🚀 Init session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleAuthChange('INITIAL_SESSION', session);
+    });
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
-        console.log('🔄 AUTH EVENT:', event);
-
-        setLoading(true);
-        setSession(currentSession);
-
-        if (currentSession?.user) {
-          const userRole = await fetchRole(currentSession.user.id);
-          setRole(userRole);
-
-          if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-            await registerForPushNotificationsAsync(currentSession.user.id);
-          }
-        } else {
-          setRole(null);
-        }
-
-        setLoading(false); // ✅ CRITICAL FIX
-      }
-    );
+    // 🎧 Listen for changes
+    const { data: listener } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      handleAuthChange(event, currentSession);
+    });
 
     return () => {
       listener.subscription.unsubscribe();
@@ -162,15 +127,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <AuthContext.Provider
-      value={{
-        session,
-        user: session?.user ?? null,
-        role,
-        loading,
-        signOut,
-      }}
-    >
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, role, loading, signOut }}>
       {children}
     </AuthContext.Provider>
   );

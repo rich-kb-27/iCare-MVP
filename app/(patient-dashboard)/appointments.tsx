@@ -256,7 +256,7 @@ const AppointmentsScreen = () => {
             </View>
             <TouchableOpacity 
               style={styles.bookBtn}
-              onPress={() => router.push("/(patient-drawer)/home")}
+              onPress={() => router.push("/tele-consultation") /* Placeholder for booking flow */}
             >
               <Text style={styles.bookBtnText}>Book Now</Text>
             </TouchableOpacity>

@@ -1,267 +1,263 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, Image,
-  TextInput, Dimensions, ActivityIndicator, Alert
+  TextInput, ActivityIndicator
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { supabase } from "../../../lib/supabase"; 
-import { useAuth } from "../../../context/AuthContext";
+import { supabase } from "../../../lib/supabase";
 import { StatusBar } from "expo-status-bar";
+import { useAuth } from "../../../context/AuthContext";
 
-export default function ModernChatList() {
-  const [patients, setPatients] = useState<any[]>([]);
+export default function FreelancerChatList() {
+  const { user } = useAuth();
+  const [chatList, setChatList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const { user } = useAuth();
   const router = useRouter();
 
-  // --- 1. THE DATA ENGINE ---
-  const fetchSubscribedPatients = useCallback(async (query = "") => {
+  const fetchFreelancerChats = useCallback(async (query = "") => {
     if (!user?.id) return;
     
     try {
-      // Step A: Get ONLY active subscriptions for this doctor
-      let subQuery = supabase
+      setLoading(true);
+
+      // 1. Get ALL relevant subscriptions (to check for active vs expired)
+      const { data: subs, error: subError } = await supabase
         .from("subscriptions")
-        .select("patient_id, patient_name, plan_type, status")
-        .eq("doctor_id", user.id)
-        .eq("status", "active");
+        .select("patient_id, plan_type, status, id")
+        .eq("doctor_id", user.id);
 
-      if (query) subQuery = subQuery.ilike("patient_name", `%${query}%`);
-
-      const { data: subs, error: subError } = await subQuery;
       if (subError) throw subError;
 
-      if (subs && subs.length > 0) {
-        const patientIds = subs.map(s => s.patient_id);
+      // 2. Get ALL message history involving the user
+      const { data: allMsgs, error: msgError } = await supabase
+        .from("messages")
+        .select("content, created_at, sender_id, receiver_id, is_read")
+        .or(`receiver_id.eq.${user.id},sender_id.eq.${user.id}`)
+        .order('created_at', { ascending: false });
 
-        // Step B: Parallel fetch Profiles and All Messages for the context
-        const [profRes, msgRes] = await Promise.all([
-          supabase.from("profiles").select("id, full_name, avatar_url").in("id", patientIds),
-          supabase.from("messages")
-            .select("id, content, created_at, sender_id, receiver_id, is_read")
-            .or(`receiver_id.eq.${user.id},sender_id.eq.${user.id}`)
-            .order('created_at', { ascending: false })
-        ]);
+      if (msgError) throw msgError;
 
-        // Step C: Merge Subscription, Profile, and Chat Stats
-        const merged = subs.map(sub => {
-          const profile = profRes.data?.find(p => p.id === sub.patient_id);
-          
-          // Filter messages belonging to THIS specific patient chat
-          const chatHistory = msgRes.data?.filter(m => 
-            m.sender_id === sub.patient_id || m.receiver_id === sub.patient_id
-          ) || [];
+      // 3. Extract unique partner IDs from message history
+      const messagePartnerIds = Array.from(new Set(
+        allMsgs?.map(m => m.sender_id === user.id ? m.receiver_id : m.sender_id) || []
+      ));
 
-          const lastMsg = chatHistory[0]; // The top message is the latest due to order
-          
-          // Count messages sent BY patient TO doctor that are NOT read
-          const unreadCount = chatHistory.filter(m => 
-            m.sender_id === sub.patient_id && 
-            m.receiver_id === user.id && 
-            !m.is_read
-          ).length;
-
-          return {
-            ...sub,
-            profileDetails: profile || null,
-            lastMessage: lastMsg?.content || "No messages yet",
-            lastMsgTime: lastMsg?.created_at,
-            unreadCount
-          };
-        });
-
-        // Step D: Sort list so the most recent activity is at the top
-        const sorted = merged.sort((a, b) => {
-          const timeA = new Date(a.lastMsgTime || 0).getTime();
-          const timeB = new Date(b.lastMsgTime || 0).getTime();
-          return timeB - timeA;
-        });
-
-        setPatients(sorted);
-      } else {
-        setPatients([]);
+      if (messagePartnerIds.length === 0) {
+        setChatList([]);
+        return;
       }
-    } catch (e: any) {
-      console.error("Sync Error:", e.message);
+
+      // 4. Fetch Profiles for all partners found in messages
+      const { data: profiles, error: profError } = await supabase
+        .from("profiles")
+        .select("id, full_name, avatar_url, role")
+        .in("id", messagePartnerIds);
+
+      if (profError) throw profError;
+
+      // 5. MASTER MERGE LOGIC
+      const combined = profiles?.map(profile => {
+        const subEntry = subs?.find(s => s.patient_id === profile.id);
+        
+        /** 
+         * LOGIC:
+         * - If they exist in 'subscriptions' table: Must be 'active' to show up.
+         * - If they DON'T exist in 'subscriptions' table: It's a facility/direct chat, show them.
+         */
+        const isInSubscriptionTable = !!subEntry;
+        const isActivePatient = subEntry?.status === 'active';
+
+        if (isInSubscriptionTable && !isActivePatient) {
+            return null; // Expired patient - hide from list
+        }
+
+        const chatHistory = allMsgs?.filter(m => 
+          m.sender_id === profile.id || m.receiver_id === profile.id
+        ) || [];
+
+        const lastMsg = chatHistory[0];
+        const unreadCount = chatHistory.filter(m => 
+          m.sender_id === profile.id && m.receiver_id === user.id && !m.is_read
+        ).length;
+
+        // Set Plan Label: If no sub exists, label as Facility/Inquiry
+        let displayPlan = "Facility";
+        if (subEntry) {
+            displayPlan = subEntry.plan_type;
+        } else if (profile.role === 'patient') {
+            displayPlan = "Inquiry";
+        }
+
+        return {
+          id: subEntry?.id || `direct-${profile.id}`, 
+          partner_id: profile.id, 
+          plan_type: displayPlan,
+          profileDetails: profile,
+          lastMessage: lastMsg?.content || "No messages yet...",
+          lastMsgTime: lastMsg?.created_at || new Date(0).toISOString(),
+          unreadCount
+        };
+      }).filter(Boolean) || [];
+
+      // 6. Filter by Search Query & Sort by Time
+      const filtered = query 
+        ? combined.filter(m => m.profileDetails?.full_name.toLowerCase().includes(query.toLowerCase()))
+        : combined;
+
+      setChatList(filtered.sort((a, b) => 
+        new Date(b.lastMsgTime).getTime() - new Date(a.lastMsgTime).getTime()
+      ));
+
+    } catch (err: any) {
+      console.error("Freelancer List Error:", err.message);
     } finally {
       setLoading(false);
     }
   }, [user?.id]);
 
-  // --- 2. REALTIME SYNC ---
   useEffect(() => {
-    fetchSubscribedPatients();
-
-    // Listen for any message changes (New inserts or is_read updates)
+    fetchFreelancerChats();
+    
+    // Real-time listener for new messages
     const channel = supabase
-      .channel('realtime-chat-updates')
+      .channel('freelancer-chat-sync')
       .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'messages' 
+          event: '*', 
+          schema: 'public', 
+          table: 'messages' 
       }, () => {
-        fetchSubscribedPatients(searchQuery);
+        fetchFreelancerChats(searchQuery);
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, [user?.id, searchQuery]);
 
-  // --- 3. NAVIGATION & MARK AS READ ---
-  const handleOpenChat = async (patientId: string, patientName: string) => {
-    // Optimization: Instantly mark as read in DB so the badge disappears
-    const { error } = await supabase
+  const handleOpenChat = async (item: any) => {
+    // Mark as read before navigating
+    await supabase
       .from('messages')
       .update({ is_read: true })
-      .eq('sender_id', patientId)
+      .eq('sender_id', item.partner_id)
       .eq('receiver_id', user?.id)
       .eq('is_read', false);
 
-    if (error) console.log("Read-status sync error:", error.message);
-
     router.push({
       pathname: "/(freelancer-dashboard)/chat/[id]",
-      params: { id: patientId, name: patientName },
+      params: { id: item.partner_id, name: item.profileDetails?.full_name }
     });
   };
 
-  const renderItem = ({ item }: any) => {
+  const renderChatItem = ({ item }: any) => {
     const profile = item.profileDetails;
-    const displayName = profile?.full_name || item.patient_name;
-    const avatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0EA5E9&color=fff&bold=true`;
+    const name = profile?.full_name || "User";
+    const avatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10B981&color=fff`;
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.8}
-        style={styles.card}
-        onPress={() => handleOpenChat(item.patient_id, displayName)}
-      >
-        <LinearGradient colors={["#1E293B", "#0F172A"]} style={styles.cardGradient}>
-          <View style={styles.cardContent}>
-            {/* Avatar Section */}
-            <View style={styles.avatarContainer}>
-              <Image source={{ uri: avatar }} style={styles.avatar} />
-              {item.unreadCount > 0 && (
-                <View style={styles.badgeCount}>
-                  <Text style={styles.badgeTextCount}>{item.unreadCount}</Text>
-                </View>
-              )}
+      <TouchableOpacity style={styles.chatCard} onPress={() => handleOpenChat(item)}>
+        <View style={styles.avatarWrapper}>
+          <Image source={{ uri: avatar }} style={styles.avatar} />
+          {item.unreadCount > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadBadgeText}>{item.unreadCount}</Text>
             </View>
+          )}
+        </View>
 
-            {/* Info Section */}
-            <View style={styles.infoContainer}>
-              <View style={styles.row}>
-                <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
-                {item.lastMsgTime && (
-                  <Text style={styles.time}>
-                    {new Date(item.lastMsgTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                )}
-              </View>
-              
-              <Text 
-                style={[styles.lastMsg, item.unreadCount > 0 && styles.unreadMsgText]} 
-                numberOfLines={1}
-              >
-                {item.lastMessage}
+        <View style={styles.chatInfo}>
+          <View style={styles.nameRow}>
+            <Text style={styles.partnerName}>{name}</Text>
+            {item.lastMsgTime !== new Date(0).toISOString() && (
+              <Text style={styles.timeText}>
+                {new Date(item.lastMsgTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </Text>
-            </View>
-
-            {/* Plan Badge */}
-            <View style={styles.tagWrapper}>
-              <View style={styles.tag}>
-                <Text style={styles.tagText}>{item.plan_type}</Text>
-              </View>
-            </View>
+            )}
           </View>
-        </LinearGradient>
+          <Text 
+            style={[styles.lastMsg, item.unreadCount > 0 && styles.activeMsgText]} 
+            numberOfLines={1}
+          >
+            {item.lastMessage}
+          </Text>
+        </View>
+
+        <View style={styles.planIndicator}>
+           <Text style={[
+               styles.planLabel, 
+               { color: item.plan_type === 'Premium' ? '#F59E0B' : item.plan_type === 'Facility' ? '#60A5FA' : '#10B981' }
+            ]}>
+             {item.plan_type}
+           </Text>
+        </View>
       </TouchableOpacity>
     );
   };
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: "#0F172A" }}>
       <StatusBar style="light" />
-      <LinearGradient colors={["#0F172A", "#020617"]} style={StyleSheet.absoluteFill} />
-      
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerSmall}>Tele-Consults</Text>
-            <Text style={styles.headerLarge}>Messages</Text>
+      <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.container}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Messages</Text>
+            <View style={styles.searchBox}>
+              <Feather name="search" size={18} color="#94A3B8" />
+              <TextInput 
+                style={styles.searchInput}
+                placeholder="Search contacts..."
+                placeholderTextColor="#64748B"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+            </View>
           </View>
-          <TouchableOpacity 
-            style={styles.syncBtn} 
-            onPress={() => fetchSubscribedPatients(searchQuery)}
-          >
-            <Feather name="refresh-cw" size={20} color="#0EA5E9" />
-          </TouchableOpacity>
-        </View>
 
-        <View style={styles.searchBox}>
-          <View style={styles.searchInner}>
-            <Feather name="search" size={18} color="#475569" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search active patients..."
-              placeholderTextColor="#475569"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+          {loading ? (
+            <ActivityIndicator color="#10B981" style={{ marginTop: 50 }} />
+          ) : (
+            <FlatList
+              data={chatList}
+              keyExtractor={(item) => item.partner_id}
+              renderItem={renderChatItem}
+              contentContainerStyle={styles.list}
+              ListEmptyComponent={
+                <View style={styles.center}>
+                  <MaterialCommunityIcons name="message-off-outline" size={60} color="#1E293B" />
+                  <Text style={styles.emptyText}>No active conversations</Text>
+                </View>
+              }
             />
-          </View>
-        </View>
-
-        {loading ? (
-          <ActivityIndicator color="#0EA5E9" style={{ marginTop: 40 }} />
-        ) : (
-          <FlatList
-            data={patients}
-            keyExtractor={(item) => item.patient_id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.listContainer}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <MaterialCommunityIcons name="comment-off-outline" size={48} color="#1E293B" />
-                <Text style={styles.emptyText}>No active patient consultations.</Text>
-              </View>
-            }
-          />
-        )}
-      </SafeAreaView>
+          )}
+        </SafeAreaView>
+      </LinearGradient>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 24 },
-  headerSmall: { color: '#38B2AC', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
-  headerLarge: { color: '#FFF', fontSize: 34, fontWeight: '900' },
-  syncBtn: { width: 45, height: 45, borderRadius: 15, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center' },
-  searchBox: { paddingHorizontal: 24, marginBottom: 20 },
-  searchInner: { flexDirection: 'row', backgroundColor: '#1E293B', height: 50, borderRadius: 15, alignItems: 'center', paddingHorizontal: 15 },
-  searchInput: { flex: 1, marginLeft: 10, color: '#FFF', fontSize: 16 },
-  listContainer: { paddingHorizontal: 20, paddingBottom: 50 },
-  card: { marginBottom: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-  cardGradient: { flex: 1 },
-  cardContent: { flexDirection: 'row', alignItems: 'center', padding: 15 },
-  avatarContainer: { position: 'relative' },
-  avatar: { width: 62, height: 62, borderRadius: 20, backgroundColor: '#020617' },
-  badgeCount: { position: 'absolute', top: -4, right: -4, backgroundColor: '#EF4444', minWidth: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: '#1E293B' },
-  badgeTextCount: { color: '#FFF', fontSize: 10, fontWeight: '900' },
-  infoContainer: { flex: 1, marginLeft: 16 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 18, fontWeight: '800', color: '#FFF' },
-  time: { fontSize: 11, color: '#475569' },
-  lastMsg: { fontSize: 14, color: '#64748B', marginTop: 4 },
-  unreadMsgText: { color: '#FFF', fontWeight: '700' },
-  tagWrapper: { marginLeft: 10 },
-  tag: { backgroundColor: 'rgba(56, 178, 172, 0.1)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  tagText: { color: '#38B2AC', fontSize: 9, fontWeight: '900', textTransform: 'uppercase' },
-  empty: { alignItems: 'center', marginTop: 80 },
-  emptyText: { color: '#475569', marginTop: 15, fontSize: 15 }
+  header: { padding: 24 },
+  title: { color: '#FFF', fontSize: 32, fontWeight: '900', marginBottom: 15 },
+  searchBox: { flexDirection: 'row', backgroundColor: '#1E293B', borderRadius: 12, paddingHorizontal: 15, height: 48, alignItems: 'center' },
+  searchInput: { flex: 1, marginLeft: 10, color: '#FFF' },
+  list: { paddingHorizontal: 20, paddingBottom: 100 },
+  chatCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 20, marginBottom: 12 },
+  avatarWrapper: { position: 'relative' },
+  avatar: { width: 60, height: 60, borderRadius: 18, backgroundColor: '#020617' },
+  unreadBadge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#EF4444', minWidth: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#1E293B' },
+  unreadBadgeText: { color: '#FFF', fontSize: 10, fontWeight: '900' },
+  chatInfo: { flex: 1, marginLeft: 15 },
+  nameRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  partnerName: { color: '#FFF', fontSize: 17, fontWeight: '800' },
+  timeText: { color: '#475569', fontSize: 11 },
+  lastMsg: { color: '#64748B', fontSize: 13, marginTop: 4 },
+  activeMsgText: { color: '#FFF', fontWeight: '700' },
+  planIndicator: { marginLeft: 10 },
+  planLabel: { fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  center: { alignItems: 'center', marginTop: 100 },
+  emptyText: { color: '#475569', marginTop: 10 }
 });

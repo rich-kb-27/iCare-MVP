@@ -21,76 +21,91 @@ export default function PatientChatList() {
 
   // --- 1. DATA ENGINE (Parallel Fetching) ---
   const fetchSubscriptions = useCallback(async (query = "") => {
-    if (!user?.id) return;
-    
-    try {
-      // Step A: Get ONLY active subscriptions for this patient
-      let subQuery = supabase
-        .from("subscriptions")
-        .select("doctor_id, plan_type, status, id")
-        .eq("patient_id", user.id)
-        .eq("status", "active");
+  if (!user?.id) return;
+  
+  try {
+    setLoading(true);
 
-      const { data: subs, error: subError } = await subQuery;
-      if (subError) throw subError;
+    // PATH A: Get active doctor subscriptions (The "Must-Show" list)
+    const { data: subs, error: subError } = await supabase
+      .from("subscriptions")
+      .select("doctor_id, plan_type, status, id")
+      .eq("patient_id", user.id)
+      .eq("status", "active");
 
-      if (subs && subs.length > 0) {
-        const doctorIds = subs.map(s => s.doctor_id);
+    if (subError) throw subError;
 
-        // Step B: Fetch Doctor Profiles and Messages in Parallel
-        const [profRes, msgRes] = await Promise.all([
-          supabase.from("profiles").select("id, full_name, avatar_url, role").in("id", doctorIds),
-          supabase.from("messages")
-            .select("content, created_at, sender_id, receiver_id, is_read")
-            .or(`receiver_id.eq.${user.id},sender_id.eq.${user.id}`)
-            .order('created_at', { ascending: false })
-        ]);
+    // PATH B: Get all message history (The "Discovery" list)
+    const { data: allMsgs, error: msgError } = await supabase
+      .from("messages")
+      .select("content, created_at, sender_id, receiver_id, is_read")
+      .or(`receiver_id.eq.${user.id},sender_id.eq.${user.id}`)
+      .order('created_at', { ascending: false });
 
-        // Step C: Merge and Calculate Stats
-        const merged = subs.map(sub => {
-          const profile = profRes.data?.find(p => p.id === sub.doctor_id);
-          
-          // Filter messages for this specific chat pair
-          const chatHistory = msgRes.data?.filter(m => 
-            m.sender_id === sub.doctor_id || m.receiver_id === sub.doctor_id
-          ) || [];
+    if (msgError) throw msgError;
 
-          const lastMsg = chatHistory[0];
-          
-          // Count messages sent BY Doctor TO Patient that are NOT read
-          const unreadCount = chatHistory.filter(m => 
-            m.sender_id === sub.doctor_id && 
-            m.receiver_id === user.id && 
-            !m.is_read
-          ).length;
+    // Merge IDs from both paths to get every unique person/facility relevant to the user
+    const messagePartnerIds = allMsgs?.map(m => m.sender_id === user.id ? m.receiver_id : m.sender_id) || [];
+    const subscribedDoctorIds = subs?.map(s => s.doctor_id) || [];
+    const allRelevantIds = Array.from(new Set([...messagePartnerIds, ...subscribedDoctorIds]));
 
-          return {
-            ...sub,
-            profileDetails: profile,
-            lastMessage: lastMsg?.content || "Start your consultation...",
-            lastMsgTime: lastMsg?.created_at,
-            unreadCount
-          };
-        });
+    // Fetch profiles for the entire set
+    const { data: profiles, error: profError } = await supabase
+      .from("profiles")
+      .select("id, full_name, avatar_url, role")
+      .in("id", allRelevantIds);
 
-        // Search filtering on the merged list
-        const filtered = query 
-          ? merged.filter(m => m.profileDetails?.full_name.toLowerCase().includes(query.toLowerCase()))
-          : merged;
+    if (profError) throw profError;
 
-        // Sort by latest message
-        setSubscribedDoctors(filtered.sort((a, b) => 
-          new Date(b.lastMsgTime || 0).getTime() - new Date(a.lastMsgTime || 0).getTime()
-        ));
-      } else {
-        setSubscribedDoctors([]);
-      }
-    } catch (err: any) {
-      console.error("Sync Error:", err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.id]);
+    // STEP E: The Master Merge
+    const combinedList = profiles?.map(profile => {
+      const subInfo = subs?.find(s => s.doctor_id === profile.id);
+      const isFacility = profile.role === 'facility';
+
+      // CRITICAL LOGIC: 
+      // 1. If they are a doctor, they MUST have a subscription to show up.
+      // 2. If they are a facility, they show up if they are in the 'allRelevantIds' (meaning we messaged them).
+      if (profile.role === 'doctor' && !subInfo) return null;
+      if (isFacility && !messagePartnerIds.includes(profile.id)) return null;
+      // Also handle cases where role isn't 'facility' but isn't a subscribed doctor
+      if (!subInfo && !isFacility) return null;
+
+      const chatHistory = allMsgs?.filter(m => 
+        m.sender_id === profile.id || m.receiver_id === profile.id
+      ) || [];
+
+      const lastMsg = chatHistory[0];
+      const unreadCount = chatHistory.filter(m => 
+        m.sender_id === profile.id && m.receiver_id === user.id && !m.is_read
+      ).length;
+
+      return {
+        id: subInfo?.id || `facility-${profile.id}`, 
+        doctor_id: profile.id, 
+        plan_type: isFacility ? 'Facility' : (subInfo?.plan_type || 'Standard'),
+        status: 'active',
+        profileDetails: profile,
+        lastMessage: lastMsg?.content || "Start your consultation...",
+        lastMsgTime: lastMsg?.created_at || new Date(0).toISOString(), // Sort empty chats to bottom
+        unreadCount
+      };
+    }).filter(Boolean) || [];
+
+    // Filter by search query and sort by time
+    const filtered = query 
+      ? combinedList.filter(m => m.profileDetails?.full_name.toLowerCase().includes(query.toLowerCase()))
+      : combinedList;
+
+    setSubscribedDoctors(filtered.sort((a, b) => 
+      new Date(b.lastMsgTime).getTime() - new Date(a.lastMsgTime).getTime()
+    ));
+
+  } catch (err: any) {
+    console.error("Sync Error:", err.message);
+  } finally {
+    setLoading(false);
+  }
+}, [user?.id]);
 
   // --- 2. REALTIME & INIT ---
   useEffect(() => {

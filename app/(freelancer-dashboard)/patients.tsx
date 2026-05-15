@@ -1,24 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  FlatList, 
-  ActivityIndicator, 
-  Alert,
-  RefreshControl,
-  Image
+  View, Text, StyleSheet, TouchableOpacity, FlatList, 
+  ActivityIndicator, Alert, RefreshControl, Image 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 
-// Enhanced Interface to include the joined Profile data
+// Define Plan Prices for Revenue Logic
+const PLAN_PRICES: { [key: string]: number } = {
+  'Basic': 150,
+  'Premium': 350,
+  'Elite': 600
+};
+
 interface Subscriber {
   id: string;
   patient_id: string;
@@ -38,37 +37,52 @@ const FreelancerSubscribers = () => {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [totalRevenue, setTotalRevenue] = useState(0);
 
-  const fetchSubscribers = async () => {
+  const syncAndFetchSubscribers = async () => {
     try {
       if (!refreshing) setLoading(true);
       if (!user) return;
 
-      // JOIN: Fetching subscriptions and the patient's profile in one go
+      const now = new Date().toISOString();
+
+      // 1. AUTO-SYNC: Update any 'active' plans that have passed their expiry date
+      const { error: syncError } = await supabase
+        .from('subscriptions')
+        .update({ status: 'expired' })
+        .eq('doctor_id', user.id)
+        .eq('status', 'active')
+        .lt('expiry_date', now); // If expiry_date is LESS THAN now
+
+      if (syncError) console.error("Sync Error:", syncError.message);
+
+      // 2. FETCH: Get the updated list
       const { data, error } = await supabase
         .from('subscriptions')
         .select(`
-          id,
-          patient_id,
-          plan_type,
-          expiry_date,
-          status,
-          profiles:patient_id (
-            full_name,
-            avatar_url,
-            phone
-          )
+          id, patient_id, plan_type, expiry_date, status,
+          profiles:patient_id (full_name, avatar_url, phone)
         `)
         .eq('doctor_id', user.id)
-        .order('start_date', { ascending: false });
+        .order('status', { ascending: true }); // Active usually comes before Expired alphabetically
 
       if (error) throw error;
       
-      // Type assertion to our interface
-      setSubscribers((data as any) || []);
+      const subs = (data as any) || [];
+      setSubscribers(subs);
+
+      // 3. CALC REVENUE: Sum up prices of only ACTIVE subscriptions
+      const revenue = subs.reduce((acc: number, sub: Subscriber) => {
+        if (sub.status === 'active') {
+          return acc + (PLAN_PRICES[sub.plan_type] || 150); // Fallback to 150
+        }
+        return acc;
+      }, 0);
+      
+      setTotalRevenue(revenue);
+
     } catch (e: any) {
-      console.error("Fetch Error:", e.message);
-      Alert.alert("Data Error", "Could not load your subscribers list.");
+      Alert.alert("Sync Error", "Failed to update subscription statuses.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -76,51 +90,62 @@ const FreelancerSubscribers = () => {
   };
 
   useEffect(() => {
-    fetchSubscribers();
+    syncAndFetchSubscribers();
   }, [user]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchSubscribers();
+    syncAndFetchSubscribers();
+  };
+
+  const handleChatPress = (item: Subscriber) => {
+    if (item.status === 'expired') {
+      Alert.alert(
+        "Subscription Expired",
+        `${item.profiles?.full_name}'s plan has expired. They need to renew before you can continue the consultation.`,
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
+    router.push({
+      pathname: "/(freelancer-dashboard)/chat/[id]",
+      params: { id: item.patient_id, name: item.profiles?.full_name }
+    });
   };
 
   const renderSubscriber = ({ item }: { item: Subscriber }) => {
-    const patientProfile = item.profiles;
-    // Check if subscription is expired via status or date
-    const isExpired = item.status === 'expired' || (item.expiry_date && new Date(item.expiry_date) < new Date());
+    const isExpired = item.status === 'expired';
     
     return (
       <TouchableOpacity 
-        style={styles.subscriberCard} 
+        style={[styles.subscriberCard, isExpired && styles.expiredCard]} 
         activeOpacity={0.8}
-        onPress={() => router.push({
-            pathname: "/(freelancer-dashboard)/chat/[id]",
-            params: { id: item.patient_id, name: patientProfile?.full_name }
-        })}
+        onPress={() => handleChatPress(item)}
       >
         <View style={styles.cardHeader}>
           <View style={styles.avatarContainer}>
-            {patientProfile?.avatar_url ? (
-              <Image source={{ uri: patientProfile.avatar_url }} style={styles.avatar} />
+            {item.profiles?.avatar_url ? (
+              <Image source={{ uri: item.profiles.avatar_url }} style={[styles.avatar, isExpired && { opacity: 0.5 }]} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>
-                    {patientProfile?.full_name?.charAt(0) || 'P'}
-                </Text>
+                <Text style={styles.avatarText}>{item.profiles?.full_name?.charAt(0) || 'P'}</Text>
               </View>
             )}
           </View>
 
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.patientName}>{patientProfile?.full_name || "Unknown Patient"}</Text>
+            <Text style={[styles.patientName, isExpired && { color: '#94A3B8' }]}>
+              {item.profiles?.full_name || "Unknown Patient"}
+            </Text>
             <View style={styles.planRow}>
-                <MaterialCommunityIcons name="shield-check" size={14} color="#0EA5E9" />
-                <Text style={styles.planBadge}>{item.plan_type} Access</Text>
+              <MaterialCommunityIcons name="shield-check" size={14} color={isExpired ? "#94A3B8" : "#0EA5E9"} />
+              <Text style={styles.planBadge}>{item.plan_type} Access</Text>
             </View>
           </View>
 
-          <View style={[styles.statusIndicator, { backgroundColor: isExpired ? '#EF4444' : '#22C55E' }]}>
-            <Text style={styles.statusText}>{isExpired ? 'Expired' : 'Active'}</Text>
+          <View style={[styles.statusIndicator, { backgroundColor: isExpired ? '#64748B' : '#22C55E' }]}>
+            <Text style={styles.statusText}>{item.status}</Text>
           </View>
         </View>
 
@@ -128,19 +153,17 @@ const FreelancerSubscribers = () => {
           <View style={styles.detailItem}>
             <Ionicons name="calendar-outline" size={14} color="#64748B" />
             <Text style={styles.detailText}>
-              {item.expiry_date ? `Ends: ${new Date(item.expiry_date).toLocaleDateString()}` : 'Recurring'}
+              {isExpired ? "Expired on: " : "Valid until: "}
+              {new Date(item.expiry_date).toLocaleDateString()}
             </Text>
           </View>
           
           <TouchableOpacity 
-            style={styles.chatBtn}
-            onPress={() => router.push({
-                pathname: "/(freelancer-dashboard)/chat/[id]",
-                params: { id: item.patient_id, name: patientProfile?.full_name }
-            })}
+            style={[styles.chatBtn, isExpired && styles.chatBtnDisabled]}
+            onPress={() => handleChatPress(item)}
           >
-            <Ionicons name="chatbubble-ellipses" size={16} color="#FFF" />
-            <Text style={styles.chatBtnText}>Message</Text>
+            <Ionicons name={isExpired ? "lock-closed" : "chatbubble-ellipses"} size={16} color="#FFF" />
+            <Text style={styles.chatBtnText}>{isExpired ? "Locked" : "Message"}</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -150,12 +173,11 @@ const FreelancerSubscribers = () => {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-
       <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.header}>
         <SafeAreaView edges={['top']}>
           <View style={styles.headerRow}>
             <View>
-              <Text style={styles.headerSubtitle}>iCare Practice Management</Text>
+              <Text style={styles.headerSubtitle}>Revenue & Practice</Text>
               <Text style={styles.headerTitle}>Subscribers</Text>
             </View>
             <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
@@ -166,14 +188,14 @@ const FreelancerSubscribers = () => {
           <View style={styles.statsRow}>
             <View style={styles.statBox}>
               <Text style={styles.statNumber}>
-                {subscribers.filter(s => s.status !== 'expired').length}
+                {subscribers.filter(s => s.status === 'active').length}
               </Text>
               <Text style={styles.statLabel}>Active Patients</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statBox}>
               <Text style={styles.statNumber}>
-                K{(subscribers.length * 150).toLocaleString()} 
+                K{totalRevenue.toLocaleString()} 
               </Text>
               <Text style={styles.statLabel}>Monthly Rev.</Text>
             </View>
@@ -185,7 +207,6 @@ const FreelancerSubscribers = () => {
         {loading && !refreshing ? (
           <View style={styles.centerLoading}>
             <ActivityIndicator size="large" color="#0EA5E9" />
-            <Text style={{ color: '#64748B', marginTop: 10 }}>Syncing Patient List...</Text>
           </View>
         ) : (
           <FlatList
@@ -193,15 +214,11 @@ const FreelancerSubscribers = () => {
             keyExtractor={(item) => item.id}
             renderItem={renderSubscriber}
             contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0EA5E9" />
-            }
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0EA5E9" />}
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="account-group-outline" size={80} color="#CBD5E1" />
-                <Text style={styles.emptyText}>You don't have any subscribers yet.</Text>
-                <Text style={styles.emptySubText}>Active subscriptions will appear here.</Text>
+                <Text style={styles.emptyText}>No active subscriptions found.</Text>
               </View>
             }
           />
@@ -226,11 +243,12 @@ const styles = StyleSheet.create({
   bottomSection: { flex: 1 },
   centerLoading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   listContent: { padding: 20, paddingBottom: 40 },
-  subscriberCard: { backgroundColor: '#FFF', borderRadius: 28, padding: 18, marginBottom: 16, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, borderWidth: 1, borderColor: '#F1F5F9' },
+  subscriberCard: { backgroundColor: '#FFF', borderRadius: 28, padding: 18, marginBottom: 16, elevation: 2, borderWidth: 1, borderColor: '#F1F5F9' },
+  expiredCard: { backgroundColor: '#F1F5F9', borderColor: '#E2E8F0', opacity: 0.8 },
   cardHeader: { flexDirection: 'row', alignItems: 'center' },
   avatarContainer: { position: 'relative' },
   avatar: { width: 52, height: 52, borderRadius: 18 },
-  avatarPlaceholder: { width: 52, height: 52, borderRadius: 18, backgroundColor: '#F0F9FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#E0F2FE' },
+  avatarPlaceholder: { width: 52, height: 52, borderRadius: 18, backgroundColor: '#F0F9FF', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#0EA5E9', fontWeight: '900', fontSize: 20 },
   patientName: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
   planRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
@@ -241,10 +259,10 @@ const styles = StyleSheet.create({
   detailItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   detailText: { fontSize: 13, color: '#64748B', fontWeight: '600' },
   chatBtn: { backgroundColor: '#0F172A', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, gap: 8 },
+  chatBtnDisabled: { backgroundColor: '#94A3B8' },
   chatBtnText: { color: '#FFF', fontSize: 14, fontWeight: '800' },
   emptyState: { alignItems: 'center', marginTop: 100 },
-  emptyText: { color: '#1E293B', marginTop: 20, fontSize: 18, fontWeight: '800' },
-  emptySubText: { color: '#94A3B8', marginTop: 5, fontSize: 14, fontWeight: '500' }
+  emptyText: { color: '#1E293B', marginTop: 20, fontSize: 16, fontWeight: '700' }
 });
 
 export default FreelancerSubscribers;

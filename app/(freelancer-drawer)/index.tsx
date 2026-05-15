@@ -34,7 +34,7 @@ const formatTime = (isoString: string) => {
 
 const QUICK_ACTIONS = [
   { id: "1", name: "Prescriptions", icon: "pill", color: "#0EA5E9", route: "/(freelancer-dashboard)/prescription" },
-  { id: "2", name: "Lab Reports", icon: "test-tube", color: "#8B5CF6", route: "/(freelancer-dashboard)/lab-reports" },
+  { id: "2", name: "Facility Checkin", icon: "hospital", color: "#8B5CF6", route: "/(freelancer-dashboard)/lab-reports" },
   { id: "3", name: "Subscribers", icon: "account-star", color: "#10B981", route: "/(freelancer-dashboard)/patients" },
   { id: "4", name: "Schedules", icon: "calendar-clock", color: "#F59E0B", route: "/(freelancer-dashboard)/schedules" },
 ];

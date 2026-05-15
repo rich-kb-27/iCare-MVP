@@ -8,121 +8,117 @@ import {
   ActivityIndicator,
   Switch,
   Platform,
+  Dimensions,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter, useNavigation } from "expo-router";
 import { DrawerActions } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
+import { StatusBar } from "expo-status-bar";
 
-const FacilityDashboard = () => {
+const { width } = Dimensions.get("window");
+
+export default function FacilityDashboard() {
   const router = useRouter();
   const navigation = useNavigation();
-  
-  // State Management
+
+  // --- STATE ---
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
-  const [profile, setProfile] = useState<{ id: string; full_name: string; role: string } | null>(null);
-  
-  // Badge States
-  const [hasUnreadNoti, setHasUnreadNoti] = useState(false);
-  const [hasUnreadMsg, setHasUnreadMsg] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
+  const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  const [unreadNotiCount, setUnreadNotiCount] = useState(0);
+  const [pendingCheckIns, setPendingCheckIns] = useState<any[]>([]);
 
-  /**
-   * 1. Fetch Profile on Mount
-   */
-  useEffect(() => {
-    getProfile();
+  // Helper check for Dynamic Rendering - now using facility_type
+  const isPharmacy = profile?.facility_type?.toLowerCase() === "pharmacy";
+
+  // --- 1. DATA ENGINE ---
+  const fetchDashboardStats = useCallback(async (userId: string) => {
+    try {
+      const [msgRes, notiRes, checkInRes] = await Promise.all([
+        supabase
+          .from("messages")
+          .select("*", { count: "exact", head: true })
+          .eq("receiver_id", userId)
+          .eq("is_read", false),
+        supabase
+          .from("notifications")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("is_read", false),
+        supabase
+          .from("check_ins")
+          .select("*, profiles:patient_id(full_name)")
+          .eq("facility_id", userId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: false })
+          .limit(3)
+      ]);
+
+      setUnreadMsgCount(msgRes.count || 0);
+      setUnreadNotiCount(notiRes.count || 0);
+      setPendingCheckIns(checkInRes.data || []);
+    } catch (err) {
+      console.error("Stat sync error:", err);
+    }
   }, []);
 
-  /**
-   * 2. Real-time Listeners
-   * Sets up subscriptions as soon as the profile ID is available
-   */
+  // --- 2. INITIALIZATION & REAL-TIME ---
   useEffect(() => {
-    console.log("Checking profile ID for Realtime:", profile?.id);
-    if (!profile?.id) return;
+    let syncChannel: any;
 
-    // Initial check when user logs in
-    checkAllUnreads();
+    const setupDashboard = async () => {
+      try {
+        setLoading(true);
+        const { data: { user } } = await supabase.auth.getUser();
 
-    // Listen for Notification changes (New inserts or status updates)
-    const notiChannel = supabase
-      .channel(`user-notifications-${profile.id}`)
-      .on(
-        'postgres_changes',
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'notifications', 
-          filter: `user_id=eq.${profile.id}` 
-        },
-        () => checkAllUnreads()
-      )
-      .subscribe();
+        if (user) {
+          // CRITICAL FIX: Added facility_type to the select query
+          const { data: profData } = await supabase
+            .from("profiles")
+            .select("id, full_name, role, facility_type")
+            .eq("id", user.id)
+            .single();
 
-    // Listen for Message changes
-    const msgChannel = supabase
-      .channel(`user-messages-${profile.id}`)
-      .on(
-        'postgres_changes',
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'messages', 
-          filter: `receiver_id=eq.${profile.id}` 
-        },
-        () => checkAllUnreads()
-      )
-      .subscribe();
+          if (profData) {
+            setProfile(profData);
+            await fetchDashboardStats(profData.id);
 
-    return () => {
-      supabase.removeChannel(notiChannel);
-      supabase.removeChannel(msgChannel);
-    };
-  }, [profile?.id]);
-
-  const checkAllUnreads = async () => {
-    if (!profile?.id) return;
-
-    // Count unread notifications
-    const { count: notiCount } = await supabase
-      .from('notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', profile.id)
-      .eq('is_read', false);
-
-    // Count unread messages
-    const { count: msgCount } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('receiver_id', profile.id)
-      .eq('is_read', false);
-
-    setHasUnreadNoti((notiCount ?? 0) > 0);
-    setHasUnreadMsg((msgCount ?? 0) > 0);
-  };
-
-  async function getProfile() {
-    try {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (user) {
-        let { data, error } = await supabase
-          .from("profiles")
-          .select(`id, full_name, role`)
-          .eq("id", user.id)
-          .single();
-
-        if (data) setProfile(data);
+            syncChannel = supabase
+              .channel(`facility_hub_${profData.id}`)
+              .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${profData.id}` },
+                () => fetchDashboardStats(profData.id)
+              )
+              .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${profData.id}` },
+                () => fetchDashboardStats(profData.id)
+              )
+              .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "check_ins", filter: `facility_id=eq.${profData.id}` },
+                () => fetchDashboardStats(profData.id)
+              )
+              .subscribe();
+          }
+        }
+      } catch (err) {
+        console.error("Dashboard Init Error:", err);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Profile load error:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
+    };
+
+    setupDashboard();
+    return () => {
+      if (syncChannel) supabase.removeChannel(syncChannel);
+    };
+  }, [fetchDashboardStats]);
 
   if (loading) {
     return (
@@ -133,220 +129,327 @@ const FacilityDashboard = () => {
   }
 
   return (
-    <LinearGradient colors={["#0F172A", "#0B3C5D", "#0EA5E9"]} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <StatusBar style="light" />
+      <LinearGradient colors={["#0F172A", "#0B3C5D", "#0EA5E9"]} style={styles.container}>
         
-        {/* Header Section */}
-        <View style={styles.header}>
-          <View style={styles.topRow}>
-            <View>
-              <Text style={styles.greeting}>{profile?.role || "Facility"} Portal</Text>
-              <Text style={styles.facilityName}>{profile?.full_name || "Facility Name"}</Text>
-            </View>
-            
-            <View style={styles.headerActions}>
-              {/* Messages Icon */}
-              <TouchableOpacity 
-                style={styles.actionIconBtn} 
-                onPress={() => router.push("/messages")}
-              >
-                <Ionicons name="chatbubble-ellipses-outline" size={24} color="#FFF" />
-                {hasUnreadMsg && <View style={styles.alertBadge} />}
-              </TouchableOpacity>
-
-              {/* Notifications Icon */}
-              <TouchableOpacity 
-                style={styles.actionIconBtn} 
-                onPress={() => router.push("/notifications")}
-              >
-                <Ionicons name="notifications-outline" size={24} color="#FFF" />
-                {hasUnreadNoti && <View style={styles.alertBadge} />}
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.menuButton}
-                onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
-              >
-                <Ionicons name="menu-outline" size={28} color="#FFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.toggleRow}>
-              <View style={styles.statusBadge}>
-                <View style={[styles.pulseDot, { backgroundColor: isOnline ? '#22C55E' : '#EF4444' }]} />
-                <Text style={styles.subtext}>{isOnline ? 'Accepting Patients' : 'Offline / At Capacity'}</Text>
-              </View>
-              <Switch
-                trackColor={{ false: "#334155", true: "#0EA5E9" }}
-                thumbColor={isOnline ? "#FFF" : "#F4F3F4"}
-                onValueChange={() => setIsOnline(!isOnline)}
-                value={isOnline}
-              />
-          </View>
-        </View>
-
-        {/* Traffic / Queue Overview */}
-        <View style={styles.glassCard}>
-          <View>
-            <Text style={styles.statusLabel}>Physical Queue</Text>
-            <Text style={styles.statusValue}>3 Active Referrals</Text>
-          </View>
-          <MaterialCommunityIcons name="hospital-marker" size={32} color="#7DD3FC" />
-        </View>
-
-        {/* Action Grid */}
-        <View style={styles.actionsRow}>
-          <ActionCard
-            icon="people-outline"
-            title="Check-ins"
-            subtitle="Referral Queue"
-            color="#10B981"
-            onPress={() => router.push("/check-ins")} 
-          />
-          <ActionCard
-            icon="cart-outline"
-            title="Inventory"
-            subtitle="Order Duniya"
-            color="#0EA5E9"
-            onPress={() => router.push("/inventory")}
-          />
-        </View>
-
-        <View style={styles.actionsRow}>
-          <ActionCard
-            icon="flask-outline"
-            title="Treatments"
-            subtitle="Active Ops"
-            color="#F59E0B"
-            onPress={() => router.push("/treatments")}
-          />
-          <ActionCard
-            icon="document-attach-outline"
-            title="Reports"
-            subtitle="Finalize Docs"
-            color="#8B5CF6"
-            onPress={() => router.push("/medical-reports")}
-          />
-        </View>
-
-        {/* Pending Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pending Execution</Text>
-          <TouchableOpacity 
-            style={styles.patientItem}
-            onPress={() => router.push("/treatments")}
+        <View style={styles.topBar}>
+          <Text style={styles.logoText}>iCare</Text>
+          <TouchableOpacity
+            style={styles.hamburger}
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
-            <View style={styles.patientInfo}>
-              <View style={[styles.avatar, { backgroundColor: '#F59E0B' }]}>
-                <Text style={styles.avatarText}>MK</Text>
-              </View>
-              <View>
-                <Text style={styles.patientName}>Mwansa Kapiri</Text>
-                <Text style={styles.patientAction}>Awaiting Lab Result</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#7DD3FC" />
+            <Ionicons name="menu-outline" size={30} color="#E0F2FE" />
           </TouchableOpacity>
         </View>
 
-      </ScrollView>
-    </LinearGradient>
-  );
-};
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          
+          <View style={styles.header}>
+            <View style={styles.welcomeRow}>
+              <View>
+                <Text style={styles.greeting}>{profile?.role || "Facility"} Portal</Text>
+                <Text style={styles.facilityName}>{profile?.full_name || "Medical Center"}</Text>
+              </View>
+              
+              <View style={styles.headerActions}>
+                <TouchableOpacity 
+                  style={styles.actionIconBtn} 
+                  onPress={() => router.push("/(facility-dashboard)/chat")}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={24} color="#FFF" />
+                  {unreadMsgCount > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadMsgCount}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
 
-/* ---------------- SUB-COMPONENTS ---------------- */
+                <TouchableOpacity 
+                  style={styles.actionIconBtn} 
+                  onPress={() => router.push("/notifications")}
+                >
+                  <Ionicons name="notifications-outline" size={24} color="#FFF" />
+                  {unreadNotiCount > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadNotiCount}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <View style={styles.statusIndicator}>
+                <View style={[styles.pulseDot, { backgroundColor: isOnline ? '#22C55E' : '#EF4444' }]} />
+                <Text style={styles.subtext}>{isOnline ? 'Online & Syncing' : 'Currently Offline'}</Text>
+              </View>
+              <Switch
+                trackColor={{ false: "#334155", true: "#0EA5E9" }}
+                thumbColor={"#FFF"}
+                onValueChange={() => setIsOnline(!isOnline)}
+                value={isOnline}
+              />
+            </View>
+          </View>
+
+          {/* SPONSORED ADS SECTION */}
+          <TouchableOpacity 
+            style={styles.adCard} 
+            onPress={() => router.push("/inventory")} 
+            activeOpacity={0.9}
+          >
+            <LinearGradient
+              colors={["rgba(14, 165, 233, 0.15)", "rgba(15, 23, 42, 0.4)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.adGradient}
+            >
+              <View style={styles.adContent}>
+                <View style={styles.adBadge}>
+                  <Text style={styles.adBadgeText}>Sponsored</Text>
+                </View>
+                <Text style={styles.adTitle}>New Medical Supplies Available</Text>
+                <Text style={styles.adDescription}>
+                  Get 15% off on all surgical equipment this month from Duniya Logistics.
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="truck-delivery-outline" size={40} color="#7DD3FC" />
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <View style={styles.grid}>
+            <ActionCard
+              icon="people-outline"
+              title="Check-ins"
+              subtitle="Active Queue"
+              color="#10B981"
+              onPress={() => router.push("/check-ins")}
+            />
+            <ActionCard
+              icon="cart-outline"
+              title="Inventory"
+              subtitle="Duniya Logistics"
+              color="#0EA5E9"
+              onPress={() => router.push("/inventory")}
+            />
+          </View>
+
+          {/* DYNAMIC RENDERING: HIDE TREATMENTS & REPORTS FOR PHARMACY */}
+          {!isPharmacy && (
+            <View style={styles.grid}>
+              <ActionCard
+                icon="flask-outline"
+                title="Treatments"
+                subtitle="Op History"
+                color="#F59E0B"
+                onPress={() => router.push("/treatments")}
+              />
+              <ActionCard
+                icon="document-text-outline"
+                title="Reports"
+                subtitle="Finalize Results"
+                color="#8B5CF6"
+                onPress={() => router.push("/medical-reports")}
+              />
+            </View>
+          )}
+
+          {/* DYNAMIC RENDERING: HIDE PRESCRIBE FOR PHARMACY */}
+          <View style={styles.grid}>
+            {!isPharmacy && (
+              <ActionCard
+                icon="create-outline"
+                title="Prescribe"
+                subtitle="Write New"
+                color="#F43F5E"
+                onPress={() => router.push("/write-prescription")}
+              />
+            )}
+            <ActionCard
+              icon="checkmark-circle-outline"
+              title={isPharmacy ? "Approve Orders" : "Approve"}
+              subtitle={isPharmacy ? "Verify Dispense" : "Verify Orders"}
+              color="#06B6D4"
+              onPress={() => router.push("/approve-prescription")}
+            />
+            {isPharmacy && <View style={{ flex: 1 }} />}
+          </View>
+
+          <View style={styles.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+              <Text style={styles.sectionTitle}>Pending Check-ins</Text>
+              {pendingCheckIns.length > 0 && (
+                <Text style={styles.subtext}>{pendingCheckIns.length} waiting</Text>
+              )}
+            </View>
+            
+            {pendingCheckIns.length === 0 ? (
+              <View style={styles.taskCard}>
+                <Text style={[styles.taskStatus, { textAlign: 'center', width: '100%' }]}>
+                  No new check-ins at the moment.
+                </Text>
+              </View>
+            ) : (
+              pendingCheckIns.map((item) => (
+                <TouchableOpacity 
+                  key={item.id} 
+                  style={[styles.taskCard, { marginBottom: 12 }]} 
+                  onPress={() => router.push("/check-ins")}
+                >
+                  <View style={styles.taskInfo}>
+                    <View style={[styles.avatarBox, { backgroundColor: '#0EA5E9' }]}>
+                      <Text style={styles.avatarText}>
+                        {item.profiles?.full_name ? item.profiles.full_name[0] : 'P'}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.taskName}>{item.profiles?.full_name || "New Patient"}</Text>
+                      <Text style={styles.taskStatus}>
+                        {item.reason_for_visit || "General Check-up"}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#7DD3FC" />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </LinearGradient>
+    </SafeAreaView>
+  );
+}
+
 const ActionCard = ({ icon, title, subtitle, color, onPress }: any) => (
-  <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.7}>
-    <View style={styles.iconWrapper}>
-      <Ionicons name={icon} size={24} color={color} />
+  <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
+    <View style={styles.cardIcon}>
+      <Ionicons name={icon} size={26} color={color} />
     </View>
-    <Text style={styles.actionTitle}>{title}</Text>
-    <Text style={styles.actionSubtitle}>{subtitle}</Text>
+    <Text style={styles.cardTitle}>{title}</Text>
+    <Text style={styles.cardSubtitle}>{subtitle}</Text>
   </TouchableOpacity>
 );
 
-/* ---------------- STYLES ---------------- */
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: "#0F172A" },
   container: { flex: 1 },
-  loadingContainer: { flex: 1, justifyContent: "center", backgroundColor: "#0F172A" },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0F172A" },
+  topBar: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    paddingHorizontal: 20, 
+    paddingVertical: 10 
+  },
+  logoText: { fontSize: 26, fontWeight: '900', color: '#FFF', letterSpacing: 1 },
+  hamburger: { padding: 5 },
   scroll: { padding: 20, paddingBottom: 100 },
-  header: { marginTop: Platform.OS === 'ios' ? 40 : 20, marginBottom: 25 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  actionIconBtn: { 
-    padding: 10, 
-    backgroundColor: 'rgba(255,255,255,0.08)', 
-    borderRadius: 12,
-    position: 'relative'
-  },
-  alertBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#EF4444',
-    borderWidth: 2,
-    borderColor: '#0F172A'
-  },
-  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 },
-  menuButton: { backgroundColor: 'rgba(255,255,255,0.1)', padding: 8, borderRadius: 12, marginLeft: 4 },
+  header: { marginBottom: 25 },
+  welcomeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   greeting: { color: "#BAE6FD", fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5 },
   facilityName: { color: "#FFF", fontSize: 24, fontWeight: "800", marginTop: 4 },
-  statusBadge: { flexDirection: 'row', alignItems: 'center' },
+  headerActions: { flexDirection: 'row', gap: 10 },
+  actionIconBtn: { 
+    padding: 10, 
+    backgroundColor: 'rgba(255,255,255,0.1)', 
+    borderRadius: 15,
+    position: 'relative'
+  },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#EF4444',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#0B3C5D'
+  },
+  badgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 },
+  statusIndicator: { flexDirection: 'row', alignItems: 'center' },
   pulseDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   subtext: { fontSize: 13, color: "#7DD3FC", fontWeight: '500' },
   
-  glassCard: {
-    backgroundColor: "rgba(255,255,255,0.08)",
+  adCard: {
+    marginHorizontal: 0,
+    marginBottom: 25,
     borderRadius: 24,
-    padding: 24,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: 'rgba(125, 211, 252, 0.2)',
   },
-  statusLabel: { fontSize: 12, color: "#BAE6FD", textTransform: 'uppercase' },
-  statusValue: { fontSize: 20, fontWeight: "700", color: "#FFF", marginTop: 4 },
+  adGradient: {
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  adContent: {
+    flex: 1,
+    marginRight: 15,
+  },
+  adBadge: {
+    backgroundColor: '#0EA5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  adBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  adTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  adDescription: {
+    fontSize: 12,
+    color: '#BAE6FD',
+    marginTop: 4,
+    lineHeight: 16,
+  },
 
-  actionsRow: { flexDirection: "row", gap: 15, marginBottom: 15 },
-  actionCard: {
+  grid: { flexDirection: "row", gap: 15, marginBottom: 15 },
+  card: {
     flex: 1,
     backgroundColor: "#FFF",
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 20,
-    elevation: 4,
+    elevation: 8,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 8,
   },
-  iconWrapper: { marginBottom: 15 },
-  actionTitle: { fontSize: 15, fontWeight: "700", color: "#0F172A" },
-  actionSubtitle: { fontSize: 11, marginTop: 4, color: "#64748B" },
+  cardIcon: { marginBottom: 12 },
+  cardTitle: { fontSize: 16, fontWeight: "700", color: "#0F172A" },
+  cardSubtitle: { fontSize: 12, marginTop: 4, color: "#64748B" },
 
-  section: { marginTop: 10 },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: "#FFF", marginBottom: 15 },
-  
-  patientItem: { 
+  section: { marginTop: 15 },
+  sectionTitle: { fontSize: 18, fontWeight: "800", color: "#FFF", marginBottom: 15 },
+  taskCard: { 
     backgroundColor: 'rgba(255,255,255,0.08)', 
-    borderRadius: 20, 
-    padding: 15, 
+    borderRadius: 22, 
+    padding: 16, 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)'
   },
-  patientInfo: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  avatarText: { color: '#FFF', fontWeight: '800' },
-  patientName: { color: '#FFF', fontWeight: '600', fontSize: 15 },
-  patientAction: { color: '#BAE6FD', fontSize: 12, marginTop: 2 },
+  taskInfo: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  avatarBox: { width: 45, height: 45, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  avatarText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  taskName: { color: '#FFF', fontWeight: '700', fontSize: 16 },
+  taskStatus: { color: '#BAE6FD', fontSize: 12, marginTop: 2 },
 });
-
-export default FacilityDashboard;

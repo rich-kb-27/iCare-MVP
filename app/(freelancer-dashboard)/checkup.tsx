@@ -11,6 +11,14 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "../../context/AuthContext";
 const { width } = Dimensions.get("window");
 
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export default function SubscriberCheckup() {
   const [subscribers, setSubscribers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,17 +113,39 @@ export default function SubscriberCheckup() {
       {/* Start Call Button */}
       <TouchableOpacity 
         style={styles.callBtn}
-        onPress={() => {
-          const callId = Math.random().toString(36).substring(7);
-          router.push({
-            pathname: "/(freelancer-dashboard)/video-call",
-            params: { 
-              patientId: item.patient_id, 
-              patientName: item.displayName,
-              callId: callId 
-            }
-          });
-        }}
+        onPress={async () => {
+  try {
+    // ✅ Use the helper function to get a valid UUID string
+    const callId = generateUUID(); 
+
+    const { error } = await supabase
+      .from('calls')
+      .insert([
+        {
+          id: callId, 
+          channel_name: callId,
+          patient_id: item.patient_id,
+          doctor_id: user?.id,
+          status: 'ringing', 
+          initiated_by: user?.id, 
+        },
+      ]);
+
+    if (error) throw error;
+
+    router.push({
+      pathname: "/(freelancer-dashboard)/video-call",
+      params: { 
+        patientId: item.patient_id, 
+        patientName: item.displayName,
+        callId: callId 
+      }
+    });
+  } catch (e: any) {
+    console.error("Call Initiation Error:", e.message);
+    Alert.alert("Connection Failed", "Could not start the session. Please try again.");
+  }
+}}
       >
         <LinearGradient colors={["#0EA5E9", "#2563EB"]} style={styles.btnGradient}>
           <MaterialCommunityIcons name="video" size={20} color="#FFF" />

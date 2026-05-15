@@ -6,11 +6,11 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router'; 
-import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, RtcSurfaceView, VideoMirrorModeType, IRtcEngine, RenderModeType } from 'react-native-agora';
+import { createAgoraRtcEngine, ChannelProfileType, ClientRoleType, RtcSurfaceView, VideoMirrorModeType, IRtcEngine, RenderModeType, AreaCode } from 'react-native-agora';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, ClipboardList, Send, ChevronDown, Plus, Trash2 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 
-const APP_ID = 'e8ea1a516c9b49d4AF42422E2FCAE0B3';
+const APP_ID = 'e8ea1a516c9b49d4af42422e2fcae0b3';
 
 export default function DoctorVideoCall() {
   const { patientId, patientName, callId } = useLocalSearchParams(); 
@@ -30,31 +30,52 @@ export default function DoctorVideoCall() {
 
   // CRITICAL: Must match the Patient side channel name
   const channelName = (callId as string);
+  const localUid = 200;
 
   useEffect(() => {
     if (!callId) return;
-    
-    // Listen for the patient ending the call
-    const callSubscription = supabase
-      .channel(`call_status_${callId}`)
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'calls', 
-        filter: `id=eq.${callId}` 
-      }, (payload) => {
-        if (payload.new.status === 'ended') exitCall();
-      })
-      .subscribe();
 
-    setupCall();
+    const getChannelAndSubscribe = async () => {
+      // 1. Fetch the actual UUID stored in the DB
+      const { data, error } = await supabase
+        .from('calls')
+        .select('channel_name')
+        .eq('id', callId)
+        .single();
 
-    return () => { 
-      supabase.removeChannel(callSubscription);
-      engine.current.leaveChannel(); 
-      engine.current.release(); 
+      if (data?.channel_name) {
+        console.log("🚀 Specialist joining UUID channel:", data.channel_name);
+        // 2. Mark the call as active
+        await supabase.from('calls').update({ status: 'active' }).eq('id', callId);
+        
+        // 3. Initialize Agora with the correct UUID
+        init(data.channel_name); 
+      }
+
+      // 4. Listen for status changes (e.g., patient hanging up)
+      const callSubscription = supabase
+        .channel(`call_status_${callId}`)
+        .on('postgres_changes', { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'calls', 
+          filter: `id=eq.${callId}` 
+        }, (payload) => {
+          if (payload.new.status === 'ended') exitCall();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(callSubscription);
+        engine.current.leaveChannel();
+        engine.current.release();
+      };
     };
+
+    getChannelAndSubscribe();
   }, [callId]);
+
+// REMOVE THE OLD setupCall() ENTIRELY to avoid accidental init() calls without a channel name.
 
   const setupCall = async () => {
     // Automatically update status to 'in-progress' when doctor joins
@@ -62,26 +83,50 @@ export default function DoctorVideoCall() {
     init();
   };
 
-  const init = async () => {
+  const init = async (actualChannelName: string) => {
     try {
       if (Platform.OS === 'android') {
         await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, 
-          PermissionsAndroid.PERMISSIONS.CAMERA
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          PermissionsAndroid.PERMISSIONS.CAMERA,
         ]);
       }
-      engine.current.initialize({ appId: APP_ID });
-      engine.current.registerEventHandler({
-        onJoinChannelSuccess: () => console.log("✅ Specialist joined channel:", channelName),
-        onUserJoined: (_connection, uid) => setRemoteUid(uid),
-        onUserOffline: () => setRemoteUid(0),
+
+      engine.current.initialize({ 
+        appId: APP_ID,
+        areaCode: AreaCode.AreaCodeGlobal 
       });
+
+      engine.current.registerEventHandler({
+        onJoinChannelSuccess: (connection) => {
+          console.log("✅ Specialist Success: Joined channel", connection.channelId);
+        },
+        onUserJoined: (_connection, uid) => {
+          console.log("👤 Patient Joined! Remote UID:", uid);
+          setRemoteUid(uid);
+        },
+        onUserOffline: () => {
+          setRemoteUid(0);
+        }
+      });
+
       engine.current.enableVideo();
-      engine.current.joinChannel('', channelName, 0, {
+      engine.current.enableAudio();
+      engine.current.startPreview();
+
+      // We use the UUID fetched from the DB
+      engine.current.joinChannel('', actualChannelName, localUid, {
         clientRoleType: ClientRoleType.ClientRoleBroadcaster,
         channelProfile: ChannelProfileType.ChannelProfileCommunication,
+        publishMicrophoneTrack: true,
+        publishCameraTrack: true,
+        autoSubscribeAudio: true,
+        autoSubscribeVideo: true,
       });
-    } catch (e) { console.error(e); }
+
+    } catch (e) {
+      console.error("Agora Init Failed:", e);
+    }
   };
 
   // UI Actions

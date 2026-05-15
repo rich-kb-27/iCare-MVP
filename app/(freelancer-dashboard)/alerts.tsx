@@ -4,14 +4,14 @@ import {
   SafeAreaView, RefreshControl, ActivityIndicator, LayoutAnimation, Platform, UIManager
 } from 'react-native';
 import { Bell, CreditCard, Video, ShieldCheck, CheckCheck, Trash2 } from 'lucide-react-native';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler'; // Added
+import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { supabase } from '@/lib/supabase';
+import { useRouter } from 'expo-router'; // Added for navigation
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(relativeTime);
 
-// Enable LayoutAnimation for smooth expansion on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -23,19 +23,21 @@ const ICON_MAP = {
 };
 
 export default function NotificationsScreen() {
+  const router = useRouter(); // Initialize router
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedId, setExpandedId] = useState(null); // Track expanded item
 
   const fetchNotifications = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    // Filtered to only get 'active' notifications
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
       .eq('user_id', user.id)
+      .eq('status', 'active') 
       .order('created_at', { ascending: false });
 
     if (!error) setNotifications(data || []);
@@ -47,11 +49,8 @@ export default function NotificationsScreen() {
     fetchNotifications();
   }, [fetchNotifications]);
 
-  // Mark specific item as read in DB and State
   const handlePressNotification = async (item) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedId(expandedId === item.id ? null : item.id);
-
+    // 1. Mark as read in Supabase if it isn't already
     if (!item.is_read) {
       const { error } = await supabase
         .from('notifications')
@@ -62,12 +61,29 @@ export default function NotificationsScreen() {
         setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, is_read: true } : n));
       }
     }
+
+    // 2. Push to the detail screen with params
+    router.push({
+      pathname: '/notification-details', // Ensure you have this file in your app/ directory
+      params: { 
+        id: item.id,
+        title: item.title,
+        body: item.body,
+        created_at: item.created_at,
+        type: item.type
+      }
+    });
   };
 
-  // Remove notification
+  // Soft delete logic: Change status instead of deleting row
   const deleteNotification = async (id) => {
-    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    const { error } = await supabase
+      .from('notifications')
+      .update({ status: 'deleted' })
+      .eq('id', id);
+
     if (!error) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setNotifications(prev => prev.filter(n => n.id !== id));
     }
   };
@@ -79,7 +95,8 @@ export default function NotificationsScreen() {
       .from('notifications')
       .update({ is_read: true })
       .eq('user_id', user.id)
-      .eq('is_read', false);
+      .eq('is_read', false)
+      .eq('status', 'active');
 
     if (!error) {
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
@@ -97,15 +114,15 @@ export default function NotificationsScreen() {
 
   const renderItem = ({ item }) => {
     const theme = ICON_MAP[item.type] || ICON_MAP.default;
-    const isExpanded = expandedId === item.id;
     
     return (
       <Swipeable 
         renderRightActions={() => renderRightActions(item.id)}
         friction={2}
+        overshootRight={false}
       >
         <TouchableOpacity 
-          activeOpacity={0.9}
+          activeOpacity={0.7}
           onPress={() => handlePressNotification(item)}
           style={[styles.notiCard, !item.is_read && styles.unreadCard]}
         >
@@ -115,12 +132,12 @@ export default function NotificationsScreen() {
           
           <View style={styles.textContainer}>
             <View style={styles.headerRow}>
-              <Text style={styles.notiTitle}>{item.title}</Text>
+              <Text style={styles.notiTitle} numberOfLines={1}>{item.title}</Text>
               <Text style={styles.timeText}>{dayjs(item.created_at).fromNow()}</Text>
             </View>
             <Text 
               style={styles.notiBody} 
-              numberOfLines={isExpanded ? undefined : 2}
+              numberOfLines={2}
             >
               {item.body}
             </Text>
@@ -142,7 +159,7 @@ export default function NotificationsScreen() {
           </View>
           <TouchableOpacity onPress={markAllRead} style={styles.clearBtn}>
             <CheckCheck size={16} color="#94A3B8" />
-            <Text style={styles.clearText}>Clear all</Text>
+            <Text style={styles.clearText}>Mark all read</Text>
           </TouchableOpacity>
         </View>
 
@@ -152,7 +169,7 @@ export default function NotificationsScreen() {
           <FlatList
             data={notifications}
             renderItem={renderItem}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => item.id.toString()}
             contentContainerStyle={styles.listPadding}
             refreshControl={
               <RefreshControl 
@@ -205,7 +222,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.03)',
-    alignItems: 'flex-start' // Changed to flex-start for multi-line support
+    alignItems: 'flex-start'
   },
   unreadCard: { 
     backgroundColor: 'rgba(99, 102, 241, 0.08)',
@@ -221,7 +238,7 @@ const styles = StyleSheet.create({
   },
   textContainer: { flex: 1 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  notiTitle: { color: '#F1F5F9', fontSize: 15, fontWeight: '700' },
+  notiTitle: { color: '#F1F5F9', fontSize: 15, fontWeight: '700', flex: 1, marginRight: 8 },
   timeText: { color: '#475569', fontSize: 11, fontWeight: '500' },
   notiBody: { color: '#94A3B8', fontSize: 13, lineHeight: 18 },
   unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#6366F1', marginLeft: 8, marginTop: 8 },
@@ -233,9 +250,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     width: 80,
-    height: '84%', // Match card height minus margin
+    height: 68, // Hardcoded approx height of card for better swipe feel
     borderRadius: 20,
-    marginBottom: 12,
-    marginLeft: 8
+    marginLeft: 10,
   }
 });

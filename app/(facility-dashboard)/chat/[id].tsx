@@ -24,17 +24,13 @@ import { Audio } from 'expo-av';
 const { width } = Dimensions.get("window");
 
 export default function PatientChatScreen() {
-  const { id, name: initialName } = useLocalSearchParams(); 
+  // Grab avatar from params passed from ChatList
+  const { id, name, avatar } = useLocalSearchParams(); 
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [patientAvatar, setPatientAvatar] = useState<string | null>(avatar as string || null);
   
-  // Profile state for the Doctor
-  const [doctorProfile, setDoctorProfile] = useState({
-    name: (initialName as string) || "Specialist",
-    avatar: null as string | null
-  });
-
   // Voice Recording States
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
@@ -56,18 +52,15 @@ export default function PatientChatScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) setUserId(user.id);
 
-      // Fetch Doctor Details for the Header and Avatars
-      const { data: doc } = await supabase
-        .from("profiles") 
-        .select("full_name, avatar_url")
-        .eq("id", id)
-        .single();
-      
-      if (doc) {
-        setDoctorProfile({
-          name: doc.full_name || (initialName as string),
-          avatar: doc.avatar_url
-        });
+      // If avatar wasn't passed in params, fetch it as fallback
+      if (!patientAvatar) {
+        const { data: pat } = await supabase
+          .from("profiles") 
+          .select("avatar_url")
+          .eq("id", id)
+          .single();
+        
+        if (pat?.avatar_url) setPatientAvatar(pat.avatar_url);
       }
     };
 
@@ -84,15 +77,17 @@ export default function PatientChatScreen() {
 
     const subscription = supabase
       .channel(`chat_room_${id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
-        const newMessage = payload.new;
-        const isRelevant = 
-          (newMessage.sender_id === userId && newMessage.receiver_id === id) ||
-          (newMessage.sender_id === id && newMessage.receiver_id === userId);
-        
-        if (isRelevant && isMounted.current) {
-          setMessages((prev) => [...prev, newMessage]);
-          if (newMessage.receiver_id === userId) markAsRead();
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          const newMessage = payload.new;
+          const isRelevant = 
+            (newMessage.sender_id === userId && newMessage.receiver_id === id) ||
+            (newMessage.sender_id === id && newMessage.receiver_id === userId);
+          
+          if (isRelevant && isMounted.current) {
+            setMessages((prev) => [...prev, newMessage]);
+            if (newMessage.receiver_id === userId) markAsRead();
+          }
         }
       })
       .subscribe();
@@ -122,11 +117,7 @@ export default function PatientChatScreen() {
   };
 
   const markAsRead = async () => {
-    await supabase.from("messages")
-      .update({ is_read: true })
-      .eq("receiver_id", userId)
-      .eq("sender_id", id)
-      .eq("is_read", false);
+    await supabase.from("messages").update({ is_read: true }).eq("receiver_id", userId).eq("sender_id", id).eq("is_read", false);
   };
 
   // 4. AUDIO HANDLERS
@@ -203,6 +194,7 @@ export default function PatientChatScreen() {
 
       const file = result.assets[0];
       const fileName = `${Date.now()}_${file.name}`;
+      
       const formData = new FormData();
       formData.append('file', {
         uri: file.uri,
@@ -280,11 +272,11 @@ export default function PatientChatScreen() {
       <View style={[styles.messageRow, isMine ? styles.rowRight : styles.rowLeft]}>
         {!isMine && (
           <View style={styles.avatarMini}>
-            {doctorProfile.avatar ? (
-              <Image source={{ uri: doctorProfile.avatar }} style={styles.avatarImg} />
+            {patientAvatar ? (
+              <Image source={{ uri: patientAvatar }} style={styles.avatarImg} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarTextMini}>{doctorProfile.name.charAt(0)}</Text>
+                <Text style={styles.avatarText}>{name?.charAt(0) || 'P'}</Text>
               </View>
             )}
           </View>
@@ -331,34 +323,25 @@ export default function PatientChatScreen() {
 
         <SafeAreaView style={styles.safeArea} edges={["top"]}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-              <Ionicons name="chevron-back" size={28} color="#FFF" />
-            </TouchableOpacity>
-
-            <View style={styles.headerAvatarContainer}>
-              {doctorProfile.avatar ? (
-                <Image source={{ uri: doctorProfile.avatar }} style={styles.headerAvatar} />
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Ionicons name="chevron-back" size={28} color="#FFF" /></TouchableOpacity>
+            
+            {/* Added Patient Header Photo */}
+            <View style={styles.headerAvatarWrapper}>
+              {patientAvatar ? (
+                <Image source={{ uri: patientAvatar }} style={styles.headerAvatar} />
               ) : (
                 <View style={[styles.headerAvatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarTextMain}>{doctorProfile.name.charAt(0)}</Text>
+                  <Text style={styles.avatarText}>{name?.charAt(0) || 'P'}</Text>
                 </View>
               )}
             </View>
 
             <View style={styles.headerInfo}>
-              <Text style={styles.headerName}>{doctorProfile.name}</Text>
-              <View style={styles.statusRow}>
-                <View style={styles.onlineDot} />
-                <Text style={styles.onlineText}>Secure Channel</Text>
-              </View>
+              <Text style={styles.headerName}>{name || "Patient"}</Text>
+              <Text style={styles.onlineText}>Secure Channel</Text>
             </View>
-
-            <TouchableOpacity 
-              style={styles.callBtn} 
-              onPress={() => router.push({ pathname: "/(patient-dashboard)/tele-consultation", params: { doctorId: id } })}
-            >
-              <MaterialCommunityIcons name="video-outline" size={24} color="#0EA5E9" />
-            </TouchableOpacity>
+            
+            {/* Video Call Button Removed as requested */}
           </View>
 
           <KeyboardAvoidingView 
@@ -385,32 +368,21 @@ export default function PatientChatScreen() {
                 )}
 
                 {isRecording ? (
-                  <View style={styles.recordingStatus}>
-                    <View style={styles.redDot} />
-                    <Text style={styles.recordingText}>Recording {formatTime(seconds)}</Text>
-                  </View>
+                  <View style={styles.recordingStatus}><View style={styles.redDot} /><Text style={styles.recordingText}>Recording {formatTime(seconds)}</Text></View>
                 ) : recordingUri ? (
                   <View style={styles.previewContainer}>
-                    <TouchableOpacity onPress={deleteRecording} style={styles.actionIcon}>
-                      <Feather name="trash-2" size={20} color="#EF4444" />
-                    </TouchableOpacity>
+                    <TouchableOpacity onPress={deleteRecording} style={styles.actionIcon}><Feather name="trash-2" size={20} color="#EF4444" /></TouchableOpacity>
                     <Text style={styles.recordingText}>Voice Note ({formatTime(seconds)})</Text>
-                    <TouchableOpacity onPress={playPreview} style={styles.actionIcon}>
-                      <Ionicons name={isPlayingPreview ? "stop-circle" : "play-circle"} size={32} color="#0EA5E9" />
-                    </TouchableOpacity>
+                    <TouchableOpacity onPress={playPreview} style={styles.actionIcon}><Ionicons name={isPlayingPreview ? "stop-circle" : "play-circle"} size={32} color="#0EA5E9" /></TouchableOpacity>
                   </View>
                 ) : (
                   <TextInput style={styles.input} placeholder="Message..." placeholderTextColor="#64748B" value={inputText} onChangeText={setInputText} />
                 )}
 
                 {recordingUri ? (
-                  <TouchableOpacity onPress={sendVoiceNote} style={styles.sendActionBtn}>
-                    <Ionicons name="send" size={20} color="#FFF" />
-                  </TouchableOpacity>
+                  <TouchableOpacity onPress={sendVoiceNote} style={styles.sendActionBtn}><Ionicons name="send" size={20} color="#FFF" /></TouchableOpacity>
                 ) : (inputText.trim().length > 0) ? (
-                  <TouchableOpacity onPress={sendMessage} style={styles.sendActionBtn}>
-                    <Ionicons name="send" size={20} color="#FFF" />
-                  </TouchableOpacity>
+                  <TouchableOpacity onPress={sendMessage} style={styles.sendActionBtn}><Ionicons name="send" size={20} color="#FFF" /></TouchableOpacity>
                 ) : (
                   <TouchableOpacity onLongPress={startRecording} onPressOut={stopRecording} style={[styles.micBtn, isRecording && styles.micBtnActive]}>
                     <MaterialCommunityIcons name={isRecording ? "microphone" : "microphone-outline"} size={24} color={isRecording ? "#FFF" : "#94A3B8"} />
@@ -430,33 +402,21 @@ const styles = StyleSheet.create({
   gradientBg: { flex: 1 },
   bgIconContainer: { ...StyleSheet.absoluteFillObject },
   safeArea: { flex: 1 },
-  header: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    paddingHorizontal: 18, 
-    paddingVertical: 12, 
-    backgroundColor: "rgba(15,23,42,0.9)", 
-    borderBottomWidth: 1, 
-    borderBottomColor: "rgba(255,255,255,0.05)" 
-  },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 12, backgroundColor: "rgba(15,23,42,0.9)", borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
   backBtn: { padding: 5 },
-  headerAvatarContainer: { marginLeft: 10 },
-  headerAvatar: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(14,165,233,0.2)" },
+  headerAvatarWrapper: { marginLeft: 10 },
+  headerAvatar: { width: 38, height: 38, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   headerInfo: { flex: 1, marginLeft: 12 },
   headerName: { color: "#FFF", fontSize: 17, fontWeight: "700" },
-  statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22C55E", marginRight: 5 },
-  onlineText: { color: "#94A3B8", fontSize: 11, fontWeight: '500' },
-  callBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(14,165,233,0.1)", justifyContent: "center", alignItems: "center" },
+  onlineText: { color: "#22C55E", fontSize: 10, fontWeight: '600' },
   listContent: { padding: 15, paddingBottom: 20 },
   messageRow: { flexDirection: "row", alignItems: "flex-end", marginBottom: 15 },
   rowRight: { justifyContent: "flex-end" },
   rowLeft: { justifyContent: "flex-start" },
-  avatarMini: { width: 28, height: 28, borderRadius: 14, marginRight: 8, overflow: 'hidden', backgroundColor: '#1E293B', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  avatarMini: { width: 32, height: 32, borderRadius: 16, marginRight: 8, overflow: 'hidden', backgroundColor: '#1E293B', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  avatarPlaceholder: { width: '100%', height: '100%', backgroundColor: '#0EA5E9', justifyContent: 'center', alignItems: 'center' },
   avatarImg: { width: '100%', height: '100%' },
-  avatarPlaceholder: { flex: 1, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center' },
-  avatarTextMini: { color: '#0EA5E9', fontSize: 12, fontWeight: '700' },
-  avatarTextMain: { color: '#0EA5E9', fontSize: 18, fontWeight: '700' },
+  avatarText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
   messageWrapper: { maxWidth: "78%" },
   bubble: { padding: 12, borderRadius: 18 },
   myBubble: { borderBottomRightRadius: 2 },

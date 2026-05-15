@@ -28,7 +28,7 @@ const AboutScreen = () => {
             <View style={styles.logoCircle}>
               <MaterialCommunityIcons name="heart-pulse" size={50} color="#0EA5E9" />
             </View>
-            <Text style={styles.companyName}>KadobiTech</Text>
+            <Text style={styles.companyName}>iCare Marketplace</Text>
             <Text style={styles.tagline}>Engineering the Future of Health</Text>
           </View>
 
@@ -36,7 +36,7 @@ const AboutScreen = () => {
           <View style={styles.glassCard}>
             <Text style={styles.sectionTitle}>The Vision</Text>
             <Text style={styles.bodyText}>
-              At <Text style={styles.highlight}>KadobiTech</Text>, we aren't just building apps; we are building lifelines. 
+              At <Text style={styles.highlight}>iCare Marketplace</Text>, we aren't just building apps; we are building lifelines. 
               iCare was born from the necessity to bridge the gap between critical medical services and the people who need them most. 
               Our journey started with a simple question: "How can we make healthcare instant?"
             </Text>
@@ -56,7 +56,7 @@ const AboutScreen = () => {
               </View>
             </View>
             <Text style={styles.founderText}>
-              "As a programmer and the founder of KadobiTech, I've spent countless nights refining every line of code 
+              "As a programmer and the founder of iCare Marketplace a product of kadobitech, I've spent countless nights refining every line of code 
               in iCare. My goal was to create a platform that is as reliable as a heartbeat. We’ve come a long way 
               from the first prototype, and we’re just getting started on our mission to revolutionize healthcare 
               technology."

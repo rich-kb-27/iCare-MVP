@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, Dimensions, Alert, Linking,
+  KeyboardAvoidingView, Platform, Dimensions, Alert, Linking, Image,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
@@ -18,6 +18,9 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   
+  // New state for the chat partner's profile
+  const [partnerProfile, setPartnerProfile] = useState<{avatar_url: string | null, full_name: string | null} | null>(null);
+
   // Voice Note States
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
@@ -33,13 +36,23 @@ export default function ChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
+  // 1. Fetch My ID and the Partner's Profile
   useEffect(() => {
     const getInitialData = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) setUserId(user.id);
+
+      // Fetch the other person's profile pic
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("avatar_url, full_name")
+        .eq("id", id)
+        .single();
+      
+      if (profile) setPartnerProfile(profile);
     };
     getInitialData();
-  }, []);
+  }, [id]);
 
   useEffect(() => {
     if (!userId) return;
@@ -191,12 +204,13 @@ export default function ChatScreen() {
     const isFile = item.message_type === 'file';
     const isPlaying = currentlyPlayingMsg === item.id;
 
+    // Determine Avatar
+    const avatarUri = partnerProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name?.toString() || "P")}&background=0EA5E9&color=fff`;
+
     return (
       <View style={[styles.messageRow, isMine ? styles.rowRight : styles.rowLeft]}>
         {!isMine && (
-          <View style={styles.avatarMini}>
-            <Text style={styles.avatarText}>{(name?.toString()?.[0] || "P").toUpperCase()}</Text>
-          </View>
+          <Image source={{ uri: avatarUri }} style={styles.avatarMini} />
         )}
         <View style={styles.messageWrapper}>
           <LinearGradient
@@ -242,8 +256,15 @@ export default function ChatScreen() {
         <SafeAreaView style={styles.safeArea} edges={["top"]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}><Ionicons name="chevron-back" size={28} color="#FFF" /></TouchableOpacity>
+            
+            {/* Header Avatar */}
+            <Image 
+              source={{ uri: partnerProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name?.toString() || "P")}&background=0EA5E9&color=fff` }} 
+              style={styles.headerAvatar} 
+            />
+
             <View style={styles.headerInfo}>
-              <Text style={styles.headerName}>{name || "Patient"}</Text>
+              <Text style={styles.headerName}>{partnerProfile?.full_name || name || "User"}</Text>
               <View style={styles.onlineRow}><View style={styles.onlineDot} /><Text style={styles.onlineText}>Secure Session Active</Text></View>
             </View>
             <TouchableOpacity style={styles.callBtn} onPress={() => router.push("/(freelancer-dashboard)/checkup")}><MaterialCommunityIcons name="video-outline" size={24} color="#0EA5E9" /></TouchableOpacity>
@@ -262,7 +283,6 @@ export default function ChatScreen() {
 
         <View style={[styles.inputWrapper, { paddingBottom: Math.max(insets.bottom, 15) }]}>
           <View style={styles.inputContainer}>
-            {/* Conditional Input UI */}
             {!isRecording && !recordingUri && (
               <TouchableOpacity style={styles.attachBtn} onPress={pickAndUploadFile}>
                 <Feather name="plus" size={22} color="#94A3B8" />
@@ -281,7 +301,6 @@ export default function ChatScreen() {
               <TextInput style={styles.input} placeholder="Type message..." placeholderTextColor="#64748B" value={inputText} onChangeText={setInputText} blurOnSubmit={false} />
             )}
 
-            {/* Actions */}
             {recordingUri ? (
               <TouchableOpacity style={styles.sendBtn} onPress={sendVoiceNote}>
                 <LinearGradient colors={["#38BDF8", "#0EA5E9"]} style={styles.sendBtnGradient}><Ionicons name="send" size={18} color="#FFF" /></LinearGradient>
@@ -306,8 +325,9 @@ const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: "#0F172A" },
   safeArea: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 14, backgroundColor: "rgba(15,23,42,0.95)", borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
-  headerInfo: { flex: 1, marginLeft: 10 },
-  headerName: { color: "#FFF", fontSize: 18, fontWeight: "800" },
+  headerAvatar: { width: 38, height: 38, borderRadius: 12, marginLeft: 10, backgroundColor: '#1E293B' },
+  headerInfo: { flex: 1, marginLeft: 12 },
+  headerName: { color: "#FFF", fontSize: 16, fontWeight: "800" },
   onlineRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22C55E" },
   onlineText: { color: "#94A3B8", fontSize: 11, fontWeight: "600" },
@@ -318,8 +338,7 @@ const styles = StyleSheet.create({
   messageRow: { flexDirection: "row", alignItems: "flex-end", marginBottom: 15 },
   rowRight: { justifyContent: "flex-end" },
   rowLeft: { justifyContent: "flex-start" },
-  avatarMini: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#0EA5E9", justifyContent: "center", alignItems: "center", marginRight: 8 },
-  avatarText: { color: "#FFF", fontWeight: "700", fontSize: 12 },
+  avatarMini: { width: 32, height: 32, borderRadius: 12, backgroundColor: "#1E293B", marginRight: 8 },
   messageWrapper: { maxWidth: "80%" },
   bubble: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20 },
   myBubble: { borderBottomRightRadius: 4 },

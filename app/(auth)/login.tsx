@@ -120,7 +120,7 @@ const LoginScreen = () => {
             )}
           </TouchableOpacity>
           
-          <TouchableOpacity style={styles.forgotPassword}>
+          <TouchableOpacity style={styles.forgotPassword} onPress={() => router.push('/forgot-password')}>
             <Text style={styles.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
         </View>
@@ -175,7 +175,7 @@ const LoginScreen = () => {
                 <View style={[styles.iconCircle, { backgroundColor: '#2DD4BF' }]}>
                   <FontAwesome5 name="user-md" size={18} color="#FFF" />
                 </View>
-                <Text style={styles.optionText}>Freelancer / Doctor</Text>
+                <Text style={styles.optionText}>Freelancer / Health proffessional</Text>
                 <FontAwesome5 name="chevron-right" size={12} color="#94A3B8" />
               </TouchableOpacity>
 
