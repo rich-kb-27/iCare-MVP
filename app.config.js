@@ -60,12 +60,13 @@ export default {
         }
       ],
       "@react-native-community/datetimepicker",
-      // 👇 THIS IS THE CRUCIAL BLOCK THAT FIXES THE KOTLIN COMPILER ERROR
+      // 👇 PINNED STABLE VERSIONS TO BYPASS GRADLE 9 COMPLETELY
       [
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "2.2.0"
+            "kotlinVersion": "1.9.24",
+            "gradleVersion": "8.10.2"
           }
         }
       ]
