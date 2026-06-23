@@ -27,7 +27,7 @@ export default {
     android: {
       package: "com.richkb27.icare",
       versionCode: 1,
-      googleServicesFile: process.env.GOOGLE_SERVICES_JSON || "./google-services.json",
+      googleServicesFile: "./google-services.json",
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",

@@ -23,20 +23,41 @@ module.exports = function withCustomBuildSetup(config) {
       const buildGradlePath = path.join(rootDir, 'build.gradle');
       if (fs.existsSync(buildGradlePath)) {
         let contents = fs.readFileSync(buildGradlePath, 'utf8');
-        
-        // If kotlinVersion is defined in buildscript, force overwrite it
         if (contents.includes('kotlinVersion =')) {
           contents = contents.replace(/kotlinVersion\s*=\s*['"].*['"]/, "kotlinVersion = '2.1.20'");
         } else if (contents.includes('ext.kotlinVersion =')) {
           contents = contents.replace(/ext\.kotlinVersion\s*=\s*['"].*['"]/, "ext.kotlinVersion = '2.1.20'");
         } else {
-          // Fallback: Inject it right into the buildscript ext block if not found
           contents = contents.replace(
             /buildscript\s*\{/,
             "buildscript {\n    ext.kotlinVersion = '2.1.20'"
           );
         }
         fs.writeFileSync(buildGradlePath, contents, 'utf8');
+      }
+
+      // 3. PHYSICALLY GENERATE THE GOOGLE SERVICES FILE IN THE RUNNER
+      if (process.env.GOOGLE_SERVICES_JSON) {
+        try {
+          const appDir = path.join(rootDir, 'app');
+          const targetJsonPath = path.join(appDir, 'google-services.json');
+          
+          let jsonContent = process.env.GOOGLE_SERVICES_JSON.trim();
+          
+          // Make sure it's saved as valid stringified JSON
+          if (!jsonContent.startsWith('{')) {
+            // In case it got uploaded with escaping or weird wrapping quotes
+            jsonContent = Object.assign({}, JSON.parse(jsonContent));
+          } else {
+            // Parse and re-stringify to clean out any web dashboard paste artifacts
+            jsonContent = JSON.stringify(JSON.parse(jsonContent), null, 2);
+          }
+          
+          fs.writeFileSync(targetJsonPath, jsonContent, 'utf8');
+          console.log(`[iCare-Fix] Successfully wrote dynamic google-services.json directly to ${targetJsonPath}`);
+        } catch (err) {
+          console.error('[iCare-Fix] Failed to write google-services.json file:', err.message);
+        }
       }
 
       return config;
