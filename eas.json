@@ -9,7 +9,8 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "KOTLIN_VERSION": "2.2.0"
       },
       "android": {
         "buildType": "apk"
@@ -19,7 +20,8 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "KOTLIN_VERSION": "2.2.0"
       },
       "android": {
         "buildType": "apk"
