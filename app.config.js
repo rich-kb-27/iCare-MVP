@@ -20,14 +20,13 @@ export default {
       bundleIdentifier: "com.richkb27.icare",
       buildNumber: "1.0.0",
       infoPlist: {
-        NSCameraUsageDescription: "iCare needs camera access for video consultations.",
+        NSCameraUsageDescription: "iCare needs camera access for video consultations and inventory barcode scanning.",
         NSMicrophoneUsageDescription: "iCare needs microphone access for video consultations."
       }
     },
     android: {
       package: "com.richkb27.icare",
       versionCode: 1,
-      // FIX: This line tells EAS to use the Secret file path if it exists
       googleServicesFile: process.env.GOOGLE_SERVICES_JSON || "./google-services.json",
       permissions: [
         "CAMERA",
@@ -60,7 +59,16 @@ export default {
           "backgroundColor": "#0F172A"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      // 👇 THIS IS THE CRUCIAL BLOCK THAT FIXES THE KOTLIN COMPILER ERROR
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "2.2.0"
+          }
+        }
+      ]
     ],
     experiments: {
       typedRoutes: true,
