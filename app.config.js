@@ -60,14 +60,6 @@ export default {
         }
       ],
       "@react-native-community/datetimepicker",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "kotlinVersion": "2.1.20"
-          }
-        }
-      ],
       "./fix-gradle-version.js"
     ],
     experiments: {
