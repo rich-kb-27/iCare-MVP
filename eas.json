@@ -13,7 +13,8 @@
         "GRADLE_OPTS": "-Dorg.gradle.version=8.10.2"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "googleServicesFile": "./google-services.json"
       }
     },
 
@@ -25,7 +26,8 @@
         "GRADLE_OPTS": "-Dorg.gradle.version=8.10.2"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "googleServicesFile": "./google-services.json"
       }
     },
 
@@ -36,7 +38,8 @@
         "GRADLE_OPTS": "-Dorg.gradle.version=8.10.2"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "googleServicesFile": "./google-services.json"
       }
     }
   }
