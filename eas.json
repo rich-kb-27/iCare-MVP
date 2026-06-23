@@ -10,28 +10,33 @@
       "channel": "development",
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "KOTLIN_VERSION": "2.2.0"
+        "KOTLIN_DAEMON_ARGS": "-Xskip-metadata-version-check"
       },
       "android": {
         "buildType": "apk"
       }
     },
+
     "preview": {
       "distribution": "internal",
       "channel": "preview",
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "KOTLIN_VERSION": "2.2.0"
+        "KOTLIN_DAEMON_ARGS": "-Xskip-metadata-version-check"
       },
       "android": {
         "buildType": "apk"
       }
     },
+
     "production": {
       "autoIncrement": true,
       "channel": "production",
+      "env": {
+        "KOTLIN_DAEMON_ARGS": "-Xskip-metadata-version-check"
+      },
       "android": {
-        "buildType": "apk" 
+        "buildType": "apk"
       }
     }
   }
