@@ -60,16 +60,15 @@ export default {
         }
       ],
       "@react-native-community/datetimepicker",
-      // 👇 PINNED STABLE VERSIONS TO BYPASS GRADLE 9 COMPLETELY
       [
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "1.9.24",
-            "gradleVersion": "8.10.2"
+            "kotlinVersion": "1.9.24"
           }
         }
-      ]
+      ],
+      "./fix-gradle-version.js"
     ],
     experiments: {
       typedRoutes: true,
