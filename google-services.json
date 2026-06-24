@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "996132584402",
+    "project_id": "icare-pushnotifications",
+    "storage_bucket": "icare-pushnotifications.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:996132584402:android:268879ececcc1763dbe60b",
+        "android_client_info": {
+          "package_name": "com.richkb27.icare"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBa61ZTn5rMAXFoMEjQ6TsaDJq93xGJAgo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

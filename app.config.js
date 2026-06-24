@@ -35,7 +35,7 @@ module.exports = {
       package: "com.richkb27.icare",
       versionCode: 1,
       // 2. If it exists, use the absolute path string. If not, use undefined so Expo ignores it safely.
-      googleServicesFile: hasGoogleServices ? googleServicesPath : undefined,
+      googleServicesFile:"./google-services.json",
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
