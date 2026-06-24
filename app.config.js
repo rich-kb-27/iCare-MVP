@@ -26,7 +26,7 @@ module.exports = {
     },
     android: {
       package: "com.richkb27.icare",
-      googleServicesFile: "./google-services.json",
+      googleServicesFile: path.resolve(__dirname, './google-services.json'),
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
