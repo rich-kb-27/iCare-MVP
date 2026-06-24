@@ -26,7 +26,7 @@ module.exports = {
     },
     android: {
       package: "com.richkb27.icare",
-      googleServicesFile: path.resolve(__dirname, './google-services.json'),
+      // File path removed here. We are using 'eas credentials:upload-google-services' instead!
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
@@ -60,8 +60,6 @@ module.exports = {
       ],
       "@react-native-community/datetimepicker",
       "./fix-gradle-version.js",
-      
-      // Newly required compatibility plugins from SDK 56 update:
       "expo-font",
       "expo-image",
       "expo-sharing",
