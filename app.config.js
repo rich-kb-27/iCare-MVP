@@ -27,7 +27,7 @@ export default {
     android: {
       package: "com.richkb27.icare",
       versionCode: 1,
-      
+      googleServicesFile: require('fs').existsSync('./google-services.json') ? "./google-services.json" : null,
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
