@@ -1,10 +1,3 @@
-const path = require('path');
-const fs = require('fs');
-
-// 1. Resolve the absolute path to make sure Node finds it inside 'my-app'
-const googleServicesPath = path.resolve(__dirname, './google-services.json');
-const hasGoogleServices = fs.existsSync(googleServicesPath);
-
 module.exports = {
   expo: {
     name: "iCare",
@@ -33,9 +26,7 @@ module.exports = {
     },
     android: {
       package: "com.richkb27.icare",
-      versionCode: 1,
-      // 2. If it exists, use the absolute path string. If not, use undefined so Expo ignores it safely.
-      googleServicesFile:"./google-services.json",
+      googleServicesFile: "./google-services.json",
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
@@ -68,7 +59,14 @@ module.exports = {
         }
       ],
       "@react-native-community/datetimepicker",
-      "./fix-gradle-version.js"
+      "./fix-gradle-version.js",
+      
+      // Newly required compatibility plugins from SDK 56 update:
+      "expo-font",
+      "expo-image",
+      "expo-sharing",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     experiments: {
       typedRoutes: true,
